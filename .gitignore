@@ -1,0 +1,34 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Raw experimental data
+data_saved/
+data_saved.zip
+
+# Generated feature tables
+emg_features.csv
+features_*.csv
+
+# Generated experiment results and models
+experiment_results/
+*.joblib
+linear_svm_params.json
+
+# Temporary files
+tempCodeRunnerFile.py
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
