@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Train and evaluate a Linear SVM from emg_feature_extractor.py output.
 
-The train/test split is performed by trial_id, not by individual windows.
-This prevents overlapping windows from the same recording leaking into both
-sets and producing an unrealistically high test score.
+With ``--validation-input``, the first CSV is used only for training and the
+second CSV only for independent validation. Without it, grouped
+cross-validation is performed by trial_id, not by individual windows. This
+prevents overlapping windows from the same recording leaking across a split.
 
 Example:
     python train_linear_svm.py --input emg_features.csv
+    python train_linear_svm.py --input train.csv --validation-input val.csv
     python train_linear_svm.py --features mav wl zc ssc
 """
 
@@ -52,6 +54,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--input", type=Path, default=Path("emg_features.csv")
+    )
+    parser.add_argument(
+        "--validation-input",
+        type=Path,
+        help=(
+            "Optional independent validation feature CSV. When provided, "
+            "--input is used only for training and this file only for "
+            "validation."
+        ),
     )
     parser.add_argument(
         "--model-output", type=Path, default=Path("linear_svm.joblib")
@@ -168,6 +179,93 @@ def main() -> int:
     y = frame["label_id"].to_numpy(dtype=np.int64) # y: 正确答案 = [0/1, 0/1, 0/1...]
     groups = frame["trial_id"].astype(str).to_numpy() # group：trail_id (它保证同一个 CSV 文件的窗口不会同时出现在训练集和测试集中)
 
+    # 如果提供独立验证集，只使用训练集拟合 StandardScaler 和 SVM。
+    # 验证集不参与 mean、scale、weight 或 bias 的学习。
+    if args.validation_input is not None:
+        validation_frame = pd.read_csv(args.validation_input)
+        validation_features = validate_data(validation_frame, features)
+        if validation_features != features:
+            raise ValueError(
+                "Training and validation feature order must be identical."
+            )
+
+        validation_x = validation_frame[features].to_numpy(dtype=np.float64)
+        validation_y = validation_frame["label_id"].to_numpy(dtype=np.int64)
+        validation_groups = (
+            validation_frame["trial_id"].astype(str).to_numpy()
+        )
+
+        model = make_model(args.c)
+        model.fit(x, y)
+        prediction = model.predict(validation_x)
+
+        accuracy = accuracy_score(validation_y, prediction)
+        balanced = balanced_accuracy_score(validation_y, prediction)
+        f1 = f1_score(validation_y, prediction)
+        matrix = confusion_matrix(
+            validation_y, prediction, labels=[0, 1]
+        )
+
+        print(f"Training input: {args.input}")
+        print(f"Validation input: {args.validation_input}")
+        print(f"Features ({len(features)}): {features}")
+        print(
+            f"Training windows: {len(frame)}, "
+            f"trials: {len(np.unique(groups))}"
+        )
+        print(
+            f"Validation windows: {len(validation_frame)}, "
+            f"trials: {len(np.unique(validation_groups))}"
+        )
+        print("\nIndependent validation metrics")
+        print(f"accuracy: {accuracy:.4f}")
+        print(f"balanced_accuracy: {balanced:.4f}")
+        print(f"F1: {f1:.4f}")
+        print("\nValidation confusion matrix [relax, bend]:")
+        print(matrix)
+        print("\nValidation classification report:")
+        print(classification_report(
+            validation_y,
+            prediction,
+            labels=[0, 1],
+            target_names=["relax", "bend"],
+            digits=4,
+            zero_division=0,
+        ))
+
+        if args.metrics_output is not None:
+            metrics = {
+                "evaluation_mode": "independent_validation",
+                "training_input": str(args.input),
+                "validation_input": str(args.validation_input),
+                "features": features,
+                "c": args.c,
+                "train_windows": len(frame),
+                "train_trials": len(np.unique(groups)),
+                "validation_windows": len(validation_frame),
+                "validation_trials": len(np.unique(validation_groups)),
+                "accuracy": float(accuracy),
+                "balanced_accuracy": float(balanced),
+                "f1": float(f1),
+                "confusion_matrix": matrix.tolist(),
+            }
+            args.metrics_output.parent.mkdir(parents=True, exist_ok=True)
+            args.metrics_output.write_text(
+                json.dumps(metrics, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+        # 独立验证完成后保存的模型仍然只在训练集上训练；
+        # 不能再用验证集重新拟合，否则验证集会变成训练数据。
+        args.model_output.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(model, args.model_output)
+        export_parameters(model, features, args.params_output)
+        print(f"Saved sklearn model: {args.model_output.resolve()}")
+        print(f"Saved STM32 parameters: {args.params_output.resolve()}")
+        if args.metrics_output is not None:
+            print(f"Saved validation metrics: {args.metrics_output.resolve()}")
+        return 0
+
     trials_per_class = (
         frame[["trial_id", "label_id"]]
         .drop_duplicates()
@@ -231,6 +329,7 @@ def main() -> int:
 
     if args.metrics_output is not None:
         metrics = {
+            "evaluation_mode": "grouped_cross_validation",
             "input": str(args.input),
             "features": features,
             "c": args.c,

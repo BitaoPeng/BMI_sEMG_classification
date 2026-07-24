@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run feature extraction and grouped Linear-SVM experiments automatically.
+"""Run feature extraction and independent-validation SVM experiments.
 
 One command runs the complete pipeline:
     python run_svm_experiments.py
@@ -10,8 +10,10 @@ Default grid:
     overlap:               50%
     feature sets:          4 combinations
 
-This creates 36 experiments under ``experiment_results`` and an aggregate
-``experiment_summary.csv`` sorted by mean balanced accuracy.
+``data_saved_01`` is used only for training and ``data_saved_02`` only for
+independent validation. This creates 36 experiments under
+``experiment_results`` and an aggregate ``experiment_summary.csv`` sorted by
+validation balanced accuracy.
 """
 
 from __future__ import annotations
@@ -57,7 +59,14 @@ def parse_args() -> argparse.Namespace:
         description="Automate sEMG feature extraction and Linear-SVM training."
     )
     parser.add_argument(
-        "--input-dir", type=Path, default=Path("data_saved/data_saved")
+        "--train-input-dir",
+        type=Path,
+        default=Path("data_saved_01/data_saved_01"),
+    )
+    parser.add_argument(
+        "--validation-input-dir",
+        type=Path,
+        default=Path("data_saved_02/data_saved_02"),
     )
     parser.add_argument(
         "--output-dir", type=Path, default=Path("experiment_results")
@@ -139,15 +148,14 @@ def write_summary(rows: list[dict], path: Path) -> None:
         return
     successful = [row for row in rows if row["status"] == "ok"]
     failed = [row for row in rows if row["status"] != "ok"]
-    successful.sort(
-        key=lambda row: row["balanced_accuracy_mean"], reverse=True
-    )
+    successful.sort(key=lambda row: row["balanced_accuracy"], reverse=True)
     ordered = successful + failed
     fieldnames = [
         "rank", "status", "experiment", "target_fs", "window_ms",
-        "overlap", "features", "feature_count", "windows", "trials",
-        "accuracy_mean", "accuracy_std", "balanced_accuracy_mean",
-        "balanced_accuracy_std", "f1_mean", "f1_std",
+        "overlap", "features", "feature_count",
+        "train_windows", "train_trials",
+        "validation_windows", "validation_trials",
+        "accuracy", "balanced_accuracy", "f1",
         "tn", "fp", "fn", "tp", "elapsed_seconds", "error",
     ]
     with path.open("w", newline="", encoding="utf-8-sig") as handle:
@@ -182,6 +190,9 @@ def main() -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = args.output_dir / "experiment_summary.csv"
+    feature_cache_dir = args.output_dir / "_feature_cache"
+    feature_cache_dir.mkdir(parents=True, exist_ok=True)
+    extracted_configurations: set[tuple[int, int, float]] = set()
     rows: list[dict] = []
     total = len(configurations)
     print(f"Starting {total} experiment(s). Output: {args.output_dir.resolve()}")
@@ -192,17 +203,32 @@ def main() -> int:
         name = experiment_name(target_fs, window_ms, overlap, features)
         experiment_dir = args.output_dir / name
         experiment_dir.mkdir(parents=True, exist_ok=True)
-        feature_path = experiment_dir / "features.csv"
+        # 同一个 sampling rate/window/overlap 的原始预处理结果可以供不同
+        # feature combinations 共用，避免重复进行四次滤波和窗口划分。
+        preprocessing_key = (target_fs, window_ms, overlap)
+        preprocessing_name = (
+            f"fs{target_fs}_win{window_ms}_ov{round(overlap * 100)}"
+        )
+        cached_dir = feature_cache_dir / preprocessing_name
+        cached_dir.mkdir(parents=True, exist_ok=True)
+        train_feature_path = cached_dir / "train_features.csv"
+        validation_feature_path = cached_dir / "validation_features.csv"
         model_path = experiment_dir / "linear_svm.joblib"
         params_path = experiment_dir / "linear_svm_params.json"
         metrics_path = experiment_dir / "metrics.json"
         start_time = time.monotonic()
         print(f"\n[{number}/{total}] {name}")
 
-        extract_command = [
+        # 一次提取所有候选特征，训练时再选择本实验需要的特征列。
+        all_features = sorted({
+            feature
+            for feature_set in DEFAULT_FEATURE_SETS
+            for feature in feature_set
+        })
+        train_extract_command = [
             sys.executable, str(extractor),
-            "--input-dir", str(args.input_dir),
-            "--output", str(feature_path),
+            "--input-dir", str(args.train_input_dir),
+            "--output", str(train_feature_path),
             "--source-fs", str(args.source_fs),
             "--target-fs", str(target_fs),
             "--window-ms", str(window_ms),
@@ -213,11 +239,28 @@ def main() -> int:
             "--notch-hz", str(args.notch_hz),
             "--filter-order", str(args.filter_order),
             "--threshold", str(args.threshold),
-            "--features", *features,
+            "--features", *all_features,
+        ]
+        validation_extract_command = [
+            sys.executable, str(extractor),
+            "--input-dir", str(args.validation_input_dir),
+            "--output", str(validation_feature_path),
+            "--source-fs", str(args.source_fs),
+            "--target-fs", str(target_fs),
+            "--window-ms", str(window_ms),
+            "--discard-ms", str(args.discard_ms),
+            "--overlap", str(overlap),
+            "--low-hz", str(args.low_hz),
+            "--high-hz", str(args.high_hz),
+            "--notch-hz", str(args.notch_hz),
+            "--filter-order", str(args.filter_order),
+            "--threshold", str(args.threshold),
+            "--features", *all_features,
         ]
         train_command = [
             sys.executable, str(trainer),
-            "--input", str(feature_path),
+            "--input", str(train_feature_path),
+            "--validation-input", str(validation_feature_path),
             "--features", *features,
             "--c", str(args.c),
             "--folds", str(args.folds),
@@ -228,7 +271,16 @@ def main() -> int:
         ]
 
         try:
-            run_command(extract_command, experiment_dir / "extract.log")
+            if preprocessing_key not in extracted_configurations:
+                run_command(
+                    train_extract_command,
+                    cached_dir / "train_extract.log",
+                )
+                run_command(
+                    validation_extract_command,
+                    cached_dir / "validation_extract.log",
+                )
+                extracted_configurations.add(preprocessing_key)
             run_command(train_command, experiment_dir / "train.log")
             metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
             matrix = metrics["confusion_matrix"]
@@ -240,18 +292,13 @@ def main() -> int:
                 "overlap": overlap,
                 "features": "+".join(features),
                 "feature_count": len(features),
-                "windows": metrics["windows"],
-                "trials": metrics["trials"],
-                "accuracy_mean": metrics["accuracy_mean"],
-                "accuracy_std": metrics["accuracy_std"],
-                "balanced_accuracy_mean": metrics[
-                    "balanced_accuracy_mean"
-                ],
-                "balanced_accuracy_std": metrics[
-                    "balanced_accuracy_std"
-                ],
-                "f1_mean": metrics["f1_mean"],
-                "f1_std": metrics["f1_std"],
+                "train_windows": metrics["train_windows"],
+                "train_trials": metrics["train_trials"],
+                "validation_windows": metrics["validation_windows"],
+                "validation_trials": metrics["validation_trials"],
+                "accuracy": metrics["accuracy"],
+                "balanced_accuracy": metrics["balanced_accuracy"],
+                "f1": metrics["f1"],
                 "tn": matrix[0][0],
                 "fp": matrix[0][1],
                 "fn": matrix[1][0],
@@ -285,11 +332,11 @@ def main() -> int:
     if successful:
         best = max(
             (row for row in rows if row["status"] == "ok"),
-            key=lambda row: row["balanced_accuracy_mean"],
+            key=lambda row: row["balanced_accuracy"],
         )
         print(
-            "Best mean balanced accuracy: "
-            f"{best['balanced_accuracy_mean']:.4f} ({best['experiment']})"
+            "Best validation balanced accuracy: "
+            f"{best['balanced_accuracy']:.4f} ({best['experiment']})"
         )
     return 0 if successful == total else 1
 

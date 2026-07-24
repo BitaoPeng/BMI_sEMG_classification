@@ -11,9 +11,9 @@ env/
 .vscode/
 .idea/
 
-# Raw experimental data
-data_saved/
-data_saved.zip
+# Ignore all data_saved directories
+/data_saved*/
+/data_saved*.zip
 
 # Generated feature tables
 emg_features.csv
