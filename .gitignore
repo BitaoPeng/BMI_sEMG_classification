@@ -19,9 +19,9 @@ emg_features.csv
 features_*.csv
 
 # Generated experiment results and models
-experiment_results/
-*.joblib
-linear_svm_params.json
+# experiment_results/
+# *.joblib
+# linear_svm_params.json
 
 # Temporary files
 tempCodeRunnerFile.py

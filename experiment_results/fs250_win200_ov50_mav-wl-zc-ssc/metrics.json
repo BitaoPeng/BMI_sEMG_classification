@@ -1,0 +1,29 @@
+{
+  "evaluation_mode": "independent_validation",
+  "training_input": "experiment_results\\_feature_cache\\fs250_win200_ov50\\train_features.csv",
+  "validation_input": "experiment_results\\_feature_cache\\fs250_win200_ov50\\validation_features.csv",
+  "features": [
+    "mav",
+    "wl",
+    "zc",
+    "ssc"
+  ],
+  "c": 1.0,
+  "train_windows": 5280,
+  "train_trials": 120,
+  "validation_windows": 2640,
+  "validation_trials": 60,
+  "accuracy": 0.8640151515151515,
+  "balanced_accuracy": 0.8640151515151515,
+  "f1": 0.8708168405901403,
+  "confusion_matrix": [
+    [
+      1071,
+      249
+    ],
+    [
+      110,
+      1210
+    ]
+  ]
+}
