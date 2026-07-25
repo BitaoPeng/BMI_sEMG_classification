@@ -88,7 +88,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--high-hz", type=float, default=100.0)
     parser.add_argument("--notch-hz", type=float, default=50.0)
     parser.add_argument("--filter-order", type=int, default=4)
-    parser.add_argument("--discard-ms", type=float, default=300.0)
+    # 每个 CSV 的前 0.5 s 不生成窗口，也不会进入训练或验证标签。
+    parser.add_argument("--discard-ms", type=float, default=500.0)
     parser.add_argument("--threshold", type=float, default=3.0)
     parser.add_argument("--c", type=float, default=1.0)
     parser.add_argument("--folds", type=int, default=5)

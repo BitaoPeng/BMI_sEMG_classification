@@ -12,8 +12,7 @@ env/
 .idea/
 
 # Ignore all data_saved directories
-/data_saved*/
-/data_saved*.zip
+/data_collection
 
 # Generated feature tables
 emg_features.csv
