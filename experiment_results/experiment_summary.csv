@@ -1,2 +1,2 @@
 ﻿rank,status,experiment,target_fs,window_ms,overlap,features,feature_count,train_windows,train_trials,validation_windows,validation_trials,accuracy,balanced_accuracy,f1,tn,fp,fn,tp,elapsed_seconds,error
-1,ok,fs250_win200_ov50_mav-wl-zc-ssc,250,200,0.5,mav+wl+zc+ssc,4,5280,120,2640,60,0.8640151515151515,0.8640151515151515,0.8708168405901403,1071,249,110,1210,6.688,
+1,ok,fs250_win200_ov50_mav-wl-zc-ssc,250,200,0.5,mav+wl+zc+ssc,4,5280,120,2640,60,0.8640151515151515,0.8640151515151515,0.8708168405901403,1071,249,110,1210,11.297,

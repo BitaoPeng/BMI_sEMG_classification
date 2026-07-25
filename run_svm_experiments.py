@@ -175,11 +175,12 @@ def main() -> int:
     args = parse_args()
     script_dir = Path(__file__).resolve().parent
     extractor = script_dir / "emg_feature_extractor.py"
-    trainer = script_dir / "train_linear_svm.py"
-    if not extractor.exists() or not trainer.exists():
+    trainer = script_dir / "train_svm.py"
+    validator = script_dir / "validate_svm.py"
+    if not extractor.exists() or not trainer.exists() or not validator.exists():
         raise FileNotFoundError(
-            "emg_feature_extractor.py and train_linear_svm.py must be beside "
-            "this script."
+            "emg_feature_extractor.py, train_svm.py and validate_svm.py "
+            "must be beside this script."
         )
 
     if args.quick:
@@ -264,11 +265,15 @@ def main() -> int:
         train_command = [
             sys.executable, str(trainer),
             "--input", str(train_feature_path),
-            "--validation-input", str(validation_feature_path),
             "--features", *features,
             "--c", str(args.c),
             "--model-output", str(model_path),
             "--params-output", str(params_path),
+        ]
+        validation_command = [
+            sys.executable, str(validator),
+            "--model-input", str(model_path),
+            "--validation-input", str(validation_feature_path),
             "--metrics-output", str(metrics_path),
         ]
 
@@ -284,6 +289,10 @@ def main() -> int:
                 )
                 extracted_configurations.add(preprocessing_key)
             run_command(train_command, experiment_dir / "train.log")
+            run_command(
+                validation_command,
+                experiment_dir / "validation.log",
+            )
             metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
             matrix = metrics["confusion_matrix"]
             rows.append({

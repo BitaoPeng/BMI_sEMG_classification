@@ -23,6 +23,8 @@ features_*.csv
 # *.joblib
 # linear_svm_params.json
 
+/zqr
+
 # Temporary files
 tempCodeRunnerFile.py
 *.tmp
