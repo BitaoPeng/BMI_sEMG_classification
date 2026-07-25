@@ -10,8 +10,9 @@ Default grid:
     overlap:               50%
     feature sets:          4 combinations
 
-``data_saved_01`` is used only for training and ``data_saved_02`` only for
-independent validation. This creates 36 experiments under
+``data_collection/data_saved_01`` is used only for training and
+``data_collection/data_saved_02`` only for independent validation. This
+creates 36 experiments under
 ``experiment_results`` and an aggregate ``experiment_summary.csv`` sorted by
 validation balanced accuracy.
 """
@@ -61,12 +62,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--train-input-dir",
         type=Path,
-        default=Path("data_saved_01/data_saved_01"),
+        default=Path(
+            "data_collection/data_saved_01/data_saved_01"
+        ),
     )
     parser.add_argument(
         "--validation-input-dir",
         type=Path,
-        default=Path("data_saved_02/data_saved_02"),
+        default=Path(
+            "data_collection/data_saved_02/data_saved_02"
+        ),
     )
     parser.add_argument(
         "--output-dir", type=Path, default=Path("experiment_results")
@@ -92,8 +97,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--discard-ms", type=float, default=500.0)
     parser.add_argument("--threshold", type=float, default=3.0)
     parser.add_argument("--c", type=float, default=1.0)
-    parser.add_argument("--folds", type=int, default=5)
-    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--quick",
         action="store_true",
@@ -264,8 +267,6 @@ def main() -> int:
             "--validation-input", str(validation_feature_path),
             "--features", *features,
             "--c", str(args.c),
-            "--folds", str(args.folds),
-            "--seed", str(args.seed),
             "--model-output", str(model_path),
             "--params-output", str(params_path),
             "--metrics-output", str(metrics_path),

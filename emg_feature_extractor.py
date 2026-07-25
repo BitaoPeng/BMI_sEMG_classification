@@ -14,8 +14,10 @@
 from __future__ import annotations
 
 # argparse：读取命令行参数，例如 --target-fs 和 --window-ms。
+# json：为 STM32 二进制特征文件保存形状、特征顺序和数据类型。
 # Path：以跨平台方式处理输入、输出文件路径。
 import argparse
+import json
 from pathlib import Path
 
 # NumPy：数组和特征数值计算。
@@ -268,6 +270,66 @@ def process_file(path: Path, args: argparse.Namespace) -> list[dict]:
     return rows
 
 
+def save_binary_features(
+    result: pd.DataFrame,
+    feature_names: list[str],
+    output_path: Path,
+    args: argparse.Namespace,
+) -> tuple[Path, Path, Path]:
+    """把特征保存为 STM32 易读取的 little-endian float32 二进制文件。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 特征矩阵使用 row-major 排列：
+    # window 0 的全部特征，接着 window 1 的全部特征，以此类推。
+    # "<f4" 明确指定 little-endian 32-bit float，与常见 STM32 float 一致。
+    feature_matrix = np.asarray(
+        result[feature_names].to_numpy(), dtype="<f4", order="C"
+    )
+    feature_matrix.tofile(output_path)
+
+    # 标签单独保存为 uint8，0=relax、1=bend。
+    # 它只用于离线验证，不应作为 SVM 的输入特征。
+    label_path = output_path.with_name(
+        f"{output_path.stem}_labels.bin"
+    )
+    labels = result["label_id"].to_numpy(dtype=np.uint8)
+    labels.tofile(label_path)
+
+    # 纯 .bin 文件本身不包含 shape 和列名，因此用 JSON sidecar 记录元数据。
+    # STM32 端必须严格按照 feature_order 中的顺序解释每一行。
+    metadata_path = output_path.with_suffix(".json")
+    metadata = {
+        "format": "semg_window_features_v1",
+        "feature_file": output_path.name,
+        "feature_dtype": "float32",
+        "byte_order": "little-endian",
+        "layout": "row-major",
+        "shape": [int(feature_matrix.shape[0]), int(feature_matrix.shape[1])],
+        "feature_order": feature_names,
+        "bytes_per_feature": 4,
+        "bytes_per_window": int(feature_matrix.shape[1] * 4),
+        "label_file": label_path.name,
+        "label_dtype": "uint8",
+        "label_shape": [int(labels.shape[0])],
+        "label_mapping": {"0": "relax", "1": "bend"},
+        "source_fs": args.source_fs,
+        "target_fs": args.target_fs,
+        "window_ms": args.window_ms,
+        "discard_ms": args.discard_ms,
+        "overlap": args.overlap,
+        "low_hz": args.low_hz,
+        "high_hz": args.high_hz,
+        "notch_hz": args.notch_hz,
+        "filter_order": args.filter_order,
+        "threshold": args.threshold,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return output_path, label_path, metadata_path
+
+
 def parse_args() -> argparse.Namespace:
     """定义并检查所有可从命令行修改的预处理参数。"""
     parser = argparse.ArgumentParser(
@@ -275,11 +337,22 @@ def parse_args() -> argparse.Namespace:
     )
     # 输入目录中需要直接包含 relax_*.csv 和 bend_*.csv。
     parser.add_argument(
-        "--input-dir", type=Path, default=Path("data_saved/data_saved")
+        "--input-dir",
+        type=Path,
+        default=Path("data_collection/data_saved_01/data_saved_01"),
     )
     # 所有文件的窗口特征最终合并保存到一个 CSV。
     parser.add_argument(
         "--output", type=Path, default=Path("emg_features.csv")
+    )
+    # 默认在 CSV 旁生成同名 .bin；也可以通过该参数指定其他位置。
+    parser.add_argument(
+        "--binary-output",
+        type=Path,
+        help=(
+            "Output little-endian float32 feature binary. "
+            "Default: replace the CSV output suffix with .bin."
+        ),
     )
     # 当前实验默认只读取第一个原始通道。
     parser.add_argument("--channel", default="Channel1_raw")
@@ -358,12 +431,22 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     result.to_csv(args.output, index=False)
 
+    # 除 CSV 外，同时输出适合 STM32 读取的 float32 特征二进制。
+    # 未显式指定 --binary-output 时，例如 features.csv -> features.bin。
+    binary_output = args.binary_output or args.output.with_suffix(".bin")
+    feature_binary, label_binary, binary_metadata = save_binary_features(
+        result, args.features, binary_output, args
+    )
+
     # 在终端汇报处理规模、两类窗口数量、特征组合和输出位置。
     counts = result.groupby("label").size().to_dict()
     print(f"Processed {len(paths)} trials -> {len(result)} windows")
     print(f"Class counts: {counts}")
     print(f"Features: {args.features}")
-    print(f"Saved: {args.output.resolve()}")
+    print(f"Saved CSV: {args.output.resolve()}")
+    print(f"Saved feature binary: {feature_binary.resolve()}")
+    print(f"Saved label binary: {label_binary.resolve()}")
+    print(f"Saved binary metadata: {binary_metadata.resolve()}")
     return 0
 
 
