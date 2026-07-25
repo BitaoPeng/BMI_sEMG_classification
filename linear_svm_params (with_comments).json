@@ -1,0 +1,41 @@
+{
+  "feature_order_comment": "表示 STM32 必须严格按照这个顺序构建特征数组。",
+  "feature_order": [    
+    "mav",
+    "rms",
+    "wl",
+    "zc",
+    "ssc"
+  ],
+  "labels": {
+    "0": "relax",
+    "1": "bend"
+  },
+  "scaler_mean_comment": "每个特征在训练集中的均值",
+  "scaler_mean": [
+    10.129194473858918,
+    13.482376465094465,
+    840.630640379289,
+    31.01086956521739,
+    31.87608695652174
+  ],
+  "scaler_scale_comment":"每个特征在训练集的标准差",
+  "scaler_scale": [
+    21.71067555824328,
+    48.68901324370283,
+    1778.6729411994208,
+    3.057757651049537,
+    2.2510562528084743
+  ],
+  "svm_weight_comment":"线性 SVM 学到的weights",
+  "svm_weight": [
+    -2.3693584487241317,
+    -7.900688668282752,
+    10.297076626643372,
+    0.0014554314718977536,
+    -0.06190662605844319
+  ],
+  "svm_bias_comment":"线性 SVM 学到的bias",
+  "svm_bias": 0.29701192930122494,
+  "decision_rule": "z[i]=(x[i]-scaler_mean[i])/scaler_scale[i]; score=sum(svm_weight[i]*z[i])+svm_bias; score>=0 => bend, else relax"
+}
