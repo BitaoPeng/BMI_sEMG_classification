@@ -1,0 +1,71 @@
+{
+  "feature_order": [
+    "mav",
+    "rms",
+    "wl",
+    "zc",
+    "ssc",
+    "mnf",
+    "mdf",
+    "pkf",
+    "bandpower"
+  ],
+  "feature_dimension": 9,
+  "labels": {
+    "0": "relax",
+    "1": "clench"
+  },
+  "c": 1.0,
+  "scaler_mean": [
+    11.043240374200826,
+    14.505353251070753,
+    1044.0678019480226,
+    24.449579831932773,
+    11.117647058823529,
+    56.455149853945095,
+    56.049763655462186,
+    54.42489495798319,
+    244.79622569166463
+  ],
+  "scaler_scale": [
+    7.123673164674132,
+    12.351144073192572,
+    692.7440280887259,
+    7.979199576015063,
+    10.53818703859001,
+    7.280596845398405,
+    9.87190922554645,
+    14.874393855120399,
+    247.25275578393098
+  ],
+  "svm_weight": [
+    0.2395526329389538,
+    -0.31191023778070975,
+    0.4783696910935657,
+    0.4614862290201982,
+    0.7921721463206103,
+    0.0001864793193717615,
+    -0.42687695825026206,
+    0.044679818067284736,
+    0.6842279419663054
+  ],
+  "svm_bias": 0.520463599582618,
+  "merged_svm_weight_raw_feature_space": [
+    0.03362768439839168,
+    -0.025253550272941315,
+    0.000690543218991556,
+    0.05783615569754575,
+    0.07517157775049335,
+    2.561319124401498e-05,
+    -0.043241580579528954,
+    0.003003807651086504,
+    0.0027673218031358886
+  ],
+  "merged_svm_bias_raw_feature_space": -0.874035525435641,
+  "decision_rule": "score=sum(merged_svm_weight_raw_feature_space[i]*x[i])+merged_svm_bias_raw_feature_space; score>=0 => clench, else relax",
+  "hardware_timing_metrics": {
+    "preprocessing_total_us": "anti-alias filtering and decimation when D>1, BPF, plus all selected time/frequency features including FFT",
+    "svm_inference_us": "merged linear dot product plus decision",
+    "total_pipeline_us": "preprocessing_total_us + svm_inference_us"
+  }
+}

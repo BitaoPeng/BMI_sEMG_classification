@@ -1,58 +1,49 @@
 #!/usr/bin/env python3
-"""Run feature extraction and independent-validation SVM experiments.
+"""自动运行稳定状态窗口的特征提取与独立验证 SVM 实验。
 
-One command runs the complete pipeline:
+一条命令运行完整流程：
     python run_svm_experiments.py
 
-Default grid:
-    target sampling rates: 500, 250, 125 Hz
-    window lengths:        100, 200, 300 ms
-    overlap:               50%
-    feature sets:          4 combinations
+默认固定预处理参数：
+    source rate:    500 Hz
+    downsampling D: 1, 2
+    BPF:            20--min(100, 0.45*effective Fs) Hz,
+                    total-4th-order Butterworth
+    reference win:  128 source samples
+    effective FFT:  128/D points
+    overlap:        50%（hop = 64/D）
+    edge guard:     button 上升沿/下降沿前后各 50 ms
 
-``data_collection/data_saved_01`` is used only for training and
-``data_collection/data_saved_02`` only for independent validation. This
-creates 36 experiments under
-``experiment_results`` and an aggregate ``experiment_summary.csv`` sorted by
-validation balanced accuracy.
+因此默认运行2个D乘4种特征组合，共8组实验。D改变时，名义窗口时长仍为
+256 ms，更新周期仍为128 ms，FFT频率分辨率仍为3.90625 Hz；滤波群延迟
+和实际处理时间仍需在硬件上测量。
+
+训练数据仅来自 ``data_collection/state_train``，独立验证数据仅来自
+``data_collection/state_validation``。脚本不会随机拆分重叠窗口。
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
-import itertools
 import json
+import locale
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 
-# Edit these lists if a different default experiment grid is wanted.
-DEFAULT_TARGET_FS = [500, 250, 125]
-DEFAULT_WINDOW_MS = [100, 200, 300]
-DEFAULT_OVERLAPS = [0.5]
-DEFAULT_FEATURE_SETS = [
-    ["mav"],
-    ["mav", "wl"],
-    ["mav", "rms", "wl"],
-    ["mav", "wl", "zc", "ssc"],
-]
-
-
-def comma_ints(value: str) -> list[int]:
-    try:
-        return [int(item.strip()) for item in value.split(",")]
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("Expected comma-separated integers.") from exc
-
-
-def comma_floats(value: str) -> list[float]:
-    try:
-        return [float(item.strip()) for item in value.split(",")]
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("Expected comma-separated numbers.") from exc
+# 四组实验分别测量纯时域、纯频域以及时频域组合的效果与部署成本。
+DEFAULT_FEATURE_SETS = {
+    "TD3": ["mav", "rms", "wl"],
+    "TD5": ["mav", "rms", "wl", "zc", "ssc"],
+    "FD4": ["mnf", "mdf", "pkf", "bandpower"],
+    "TD_FD9": [
+        "mav", "rms", "wl", "zc", "ssc",
+        "mnf", "mdf", "pkf", "bandpower",
+    ],
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,52 +53,106 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--train-input-dir",
         type=Path,
-        default=Path(
-            "data_collection/data_saved_01/data_saved_01"
-        ),
+        default=Path("data_collection/state_train"),
     )
     parser.add_argument(
         "--validation-input-dir",
         type=Path,
-        default=Path(
-            "data_collection/data_saved_02/data_saved_02"
-        ),
+        default=Path("data_collection/state_validation"),
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("experiment_results")
-    )
-    parser.add_argument("--source-fs", type=int, default=500)
-    parser.add_argument(
-        "--target-fs", type=comma_ints, default=DEFAULT_TARGET_FS,
-        help="Comma-separated target rates, e.g. 500,250,125."
+        "--output-dir", type=Path, default=Path("experiment_results_state")
     )
     parser.add_argument(
-        "--window-ms", type=comma_ints, default=DEFAULT_WINDOW_MS,
-        help="Comma-separated window lengths, e.g. 100,200,300."
+        "--sampling-rate",
+        type=int,
+        default=500,
+        help="Source ADC sampling rate before digital downsampling.",
     )
     parser.add_argument(
-        "--overlaps", type=comma_floats, default=DEFAULT_OVERLAPS,
-        help="Comma-separated overlap fractions, e.g. 0,0.5,0.75."
+        "--downsample-factors",
+        nargs="+",
+        type=int,
+        default=[1, 2],
+        help="Integer D values; default runs D=1 and D=2.",
     )
+    parser.add_argument(
+        "--window-samples",
+        type=int,
+        default=128,
+        help="Reference window length at the source sampling rate.",
+    )
+    parser.add_argument("--overlap", type=float, default=0.5)
+    parser.add_argument("--edge-guard-ms", type=float, default=50.0)
     parser.add_argument("--low-hz", type=float, default=20.0)
     parser.add_argument("--high-hz", type=float, default=100.0)
-    parser.add_argument("--notch-hz", type=float, default=50.0)
     parser.add_argument("--filter-order", type=int, default=4)
-    # 每个 CSV 的前 0.5 s 不生成窗口，也不会进入训练或验证标签。
-    parser.add_argument("--discard-ms", type=float, default=500.0)
-    parser.add_argument("--threshold", type=float, default=3.0)
+    parser.add_argument("--aa-passband-ripple-db", type=float, default=1.0)
+    parser.add_argument(
+        "--aa-stopband-attenuation-db", type=float, default=40.0
+    )
     parser.add_argument("--c", type=float, default=1.0)
     parser.add_argument(
         "--quick",
         action="store_true",
-        help="Run only one baseline configuration for a quick pipeline check.",
+        help="Run only TD3 with the first D for a quick pipeline check.",
     )
     parser.add_argument(
         "--continue-on-error",
         action="store_true",
         help="Record a failed experiment and continue with the remaining grid.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.sampling_rate <= 0:
+        parser.error("--sampling-rate must be positive.")
+    if not args.downsample_factors:
+        parser.error("--downsample-factors requires at least one D.")
+    if any(factor < 1 for factor in args.downsample_factors):
+        parser.error("Every --downsample-factors value must be >= 1.")
+    if len(set(args.downsample_factors)) != len(args.downsample_factors):
+        parser.error("--downsample-factors cannot contain duplicates.")
+    if args.window_samples < 2:
+        parser.error("--window-samples must be at least 2.")
+    if not 0.0 <= args.overlap < 1.0:
+        parser.error("--overlap must satisfy 0 <= overlap < 1.")
+    if args.edge_guard_ms < 0:
+        parser.error("--edge-guard-ms cannot be negative.")
+    reference_hop = round(args.window_samples * (1.0 - args.overlap))
+    if reference_hop < 1:
+        parser.error("Window/overlap produces an invalid reference hop.")
+    for factor in args.downsample_factors:
+        if args.window_samples % factor or reference_hop % factor:
+            parser.error(
+                f"D={factor} must divide both reference window "
+                f"({args.window_samples}) and reference hop "
+                f"({reference_hop}) exactly."
+            )
+        effective_sampling_rate = args.sampling_rate / factor
+        effective_high_hz = min(
+            args.high_hz, 0.45 * effective_sampling_rate
+        )
+        if not 0 < args.low_hz < effective_high_hz:
+            parser.error(
+                f"For D={factor}, require 0 < low-hz < "
+                "min(high-hz, 0.45 * effective sampling rate); "
+                f"effective high is {effective_high_hz:g} Hz."
+            )
+    if args.filter_order < 2 or args.filter_order % 2:
+        parser.error("--filter-order must be an even integer >= 2.")
+    if args.c <= 0:
+        parser.error("--c must be positive.")
+    if args.aa_passband_ripple_db <= 0:
+        parser.error("--aa-passband-ripple-db must be positive.")
+    if (
+        args.aa_stopband_attenuation_db
+        <= args.aa_passband_ripple_db
+    ):
+        parser.error(
+            "--aa-stopband-attenuation-db must exceed "
+            "--aa-passband-ripple-db."
+        )
+    args.reference_hop_samples = reference_hop
+    return args
 
 
 def run_command(command: list[str], log_path: Path) -> None:
@@ -115,8 +160,10 @@ def run_command(command: list[str], log_path: Path) -> None:
     result = subprocess.run(
         command,
         text=True,
-        encoding="utf-8",
-        errors="replace",
+        # Windows下子Python进程连接到PIPE时通常使用系统代码页（中文环境为
+        # cp936/GBK），不能固定按UTF-8解码，否则日志和终端输出可能报错。
+        encoding=locale.getpreferredencoding(False),
+        errors="backslashreplace",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
@@ -134,16 +181,37 @@ def run_command(command: list[str], log_path: Path) -> None:
 
 
 def experiment_name(
-    target_fs: int,
-    window_ms: int,
+    feature_set: str,
+    source_sampling_rate: int,
+    downsample_factor: int,
+    reference_window_samples: int,
     overlap: float,
-    features: list[str],
+    low_hz: float,
+    requested_high_hz: float,
+    effective_high_hz: float,
+    filter_order: int,
+    edge_guard_ms: float,
+    aa_passband_ripple_db: float,
+    aa_stopband_attenuation_db: float,
+    c_value: float,
 ) -> str:
     overlap_percent = round(overlap * 100)
-    feature_text = "-".join(features)
+    effective_sampling_rate = source_sampling_rate / downsample_factor
+    effective_window_samples = (
+        reference_window_samples // downsample_factor
+    )
+    fs_text = f"{effective_sampling_rate:g}".replace(".", "p")
+    parameter_text = (
+        f"bpf{low_hz:g}-{requested_high_hz:g}to"
+        f"{effective_high_hz:g}_o{filter_order}_"
+        f"g{edge_guard_ms:g}_"
+        f"aa{aa_passband_ripple_db:g}-{aa_stopband_attenuation_db:g}_"
+        f"c{c_value:g}"
+    ).replace(".", "p")
     return (
-        f"fs{target_fs}_win{window_ms}_ov{overlap_percent}_"
-        f"{feature_text}"
+        f"{feature_set.lower()}_d{downsample_factor}_fs{fs_text}_"
+        f"fft{effective_window_samples}_ov{overlap_percent}_"
+        f"{parameter_text}"
     )
 
 
@@ -155,10 +223,18 @@ def write_summary(rows: list[dict], path: Path) -> None:
     successful.sort(key=lambda row: row["balanced_accuracy"], reverse=True)
     ordered = successful + failed
     fieldnames = [
-        "rank", "status", "experiment", "target_fs", "window_ms",
-        "overlap", "features", "feature_count",
-        "train_windows", "train_trials",
-        "validation_windows", "validation_trials",
+        "rank", "status", "experiment", "feature_set",
+        "source_sampling_rate", "downsample_factor",
+        "effective_sampling_rate",
+        "reference_window_samples", "window_samples", "fft_points",
+        "source_hop_samples", "hop_samples",
+        "window_duration_ms", "update_period_ms",
+        "overlap", "edge_guard_ms",
+        "low_hz", "high_hz", "effective_high_hz", "filter_order",
+        "aa_passband_ripple_db", "aa_stopband_attenuation_db",
+        "features", "feature_count",
+        "train_windows", "train_sessions",
+        "validation_windows", "validation_sessions",
         "accuracy", "balanced_accuracy", "f1",
         "tn", "fp", "fn", "tp", "elapsed_seconds", "error",
     ]
@@ -183,36 +259,90 @@ def main() -> int:
             "must be beside this script."
         )
 
+    # 训练与验证必须来自两个独立目录，不能把同一 session 的重叠窗口随机拆开。
+    train_dir = args.train_input_dir.resolve()
+    validation_dir = args.validation_input_dir.resolve()
+    if train_dir == validation_dir:
+        raise ValueError(
+            "Training and validation input directories must be different."
+        )
+
     if args.quick:
-        configurations = [(250, 200, 0.5, ["mav", "wl", "zc", "ssc"])]
+        configurations = [
+            (
+                args.downsample_factors[0],
+                "TD3",
+                DEFAULT_FEATURE_SETS["TD3"],
+            )
+        ]
     else:
-        configurations = list(itertools.product(
-            args.target_fs,
-            args.window_ms,
-            args.overlaps,
-            DEFAULT_FEATURE_SETS,
-        ))
+        configurations = [
+            (factor, feature_set, features)
+            for factor in args.downsample_factors
+            for feature_set, features in DEFAULT_FEATURE_SETS.items()
+        ]
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = args.output_dir / "experiment_summary.csv"
     feature_cache_dir = args.output_dir / "_feature_cache"
     feature_cache_dir.mkdir(parents=True, exist_ok=True)
-    extracted_configurations: set[tuple[int, int, float]] = set()
+    extracted_downsample_factors: set[int] = set()
     rows: list[dict] = []
     total = len(configurations)
     print(f"Starting {total} experiment(s). Output: {args.output_dir.resolve()}")
 
-    for number, (target_fs, window_ms, overlap, features) in enumerate(
+    for number, (downsample_factor, feature_set, features) in enumerate(
         configurations, start=1
     ):
-        name = experiment_name(target_fs, window_ms, overlap, features)
+        effective_sampling_rate = (
+            args.sampling_rate / downsample_factor
+        )
+        effective_high_hz = min(
+            args.high_hz, 0.45 * effective_sampling_rate
+        )
+        effective_window_samples = (
+            args.window_samples // downsample_factor
+        )
+        effective_hop_samples = (
+            args.reference_hop_samples // downsample_factor
+        )
+        window_duration_ms = (
+            1000.0 * effective_window_samples / effective_sampling_rate
+        )
+        update_period_ms = (
+            1000.0 * effective_hop_samples / effective_sampling_rate
+        )
+        name = experiment_name(
+            feature_set,
+            args.sampling_rate,
+            downsample_factor,
+            args.window_samples,
+            args.overlap,
+            args.low_hz,
+            args.high_hz,
+            effective_high_hz,
+            args.filter_order,
+            args.edge_guard_ms,
+            args.aa_passband_ripple_db,
+            args.aa_stopband_attenuation_db,
+            args.c,
+        )
         experiment_dir = args.output_dir / name
         experiment_dir.mkdir(parents=True, exist_ok=True)
-        # 同一个 sampling rate/window/overlap 的原始预处理结果可以供不同
-        # feature combinations 共用，避免重复进行四次滤波和窗口划分。
-        preprocessing_key = (target_fs, window_ms, overlap)
+        # 四组实验采用完全相同的预处理和窗口，因此只提取一次全部九个特征。
+        # 各模型训练时再按照 TD3、TD5、FD4 或 TD_FD9 选择对应列。
+        overlap_percent = round(args.overlap * 100)
+        effective_fs_text = f"{effective_sampling_rate:g}".replace(".", "p")
         preprocessing_name = (
-            f"fs{target_fs}_win{window_ms}_ov{round(overlap * 100)}"
+            f"srcfs{args.sampling_rate}_d{downsample_factor}_"
+            f"fs{effective_fs_text}_"
+            f"win{args.window_samples}to{effective_window_samples}_"
+            f"hop{args.reference_hop_samples}to{effective_hop_samples}_"
+            f"ov{overlap_percent}_guard{args.edge_guard_ms:g}_"
+            f"bpf{args.low_hz:g}-{args.high_hz:g}to"
+            f"{effective_high_hz:g}_o{args.filter_order}_"
+            f"aa{args.aa_passband_ripple_db:g}-"
+            f"{args.aa_stopband_attenuation_db:g}"
         )
         cached_dir = feature_cache_dir / preprocessing_name
         cached_dir.mkdir(parents=True, exist_ok=True)
@@ -225,41 +355,43 @@ def main() -> int:
         print(f"\n[{number}/{total}] {name}")
 
         # 一次提取所有候选特征，训练时再选择本实验需要的特征列。
-        all_features = sorted({
-            feature
-            for feature_set in DEFAULT_FEATURE_SETS
-            for feature in feature_set
-        })
+        all_features = DEFAULT_FEATURE_SETS["TD_FD9"]
         train_extract_command = [
             sys.executable, str(extractor),
             "--input-dir", str(args.train_input_dir),
             "--output", str(train_feature_path),
-            "--source-fs", str(args.source_fs),
-            "--target-fs", str(target_fs),
-            "--window-ms", str(window_ms),
-            "--discard-ms", str(args.discard_ms),
-            "--overlap", str(overlap),
+            "--sampling-rate", str(args.sampling_rate),
+            "--downsample-factor", str(downsample_factor),
+            "--window-samples", str(args.window_samples),
+            "--overlap", str(args.overlap),
+            "--edge-guard-ms", str(args.edge_guard_ms),
             "--low-hz", str(args.low_hz),
             "--high-hz", str(args.high_hz),
-            "--notch-hz", str(args.notch_hz),
+            "--fft-low-hz", str(args.low_hz),
+            "--fft-high-hz", str(args.high_hz),
             "--filter-order", str(args.filter_order),
-            "--threshold", str(args.threshold),
+            "--aa-passband-ripple-db", str(args.aa_passband_ripple_db),
+            "--aa-stopband-attenuation-db",
+            str(args.aa_stopband_attenuation_db),
             "--features", *all_features,
         ]
         validation_extract_command = [
             sys.executable, str(extractor),
             "--input-dir", str(args.validation_input_dir),
             "--output", str(validation_feature_path),
-            "--source-fs", str(args.source_fs),
-            "--target-fs", str(target_fs),
-            "--window-ms", str(window_ms),
-            "--discard-ms", str(args.discard_ms),
-            "--overlap", str(overlap),
+            "--sampling-rate", str(args.sampling_rate),
+            "--downsample-factor", str(downsample_factor),
+            "--window-samples", str(args.window_samples),
+            "--overlap", str(args.overlap),
+            "--edge-guard-ms", str(args.edge_guard_ms),
             "--low-hz", str(args.low_hz),
             "--high-hz", str(args.high_hz),
-            "--notch-hz", str(args.notch_hz),
+            "--fft-low-hz", str(args.low_hz),
+            "--fft-high-hz", str(args.high_hz),
             "--filter-order", str(args.filter_order),
-            "--threshold", str(args.threshold),
+            "--aa-passband-ripple-db", str(args.aa_passband_ripple_db),
+            "--aa-stopband-attenuation-db",
+            str(args.aa_stopband_attenuation_db),
             "--features", *all_features,
         ]
         train_command = [
@@ -276,9 +408,35 @@ def main() -> int:
             "--validation-input", str(validation_feature_path),
             "--metrics-output", str(metrics_path),
         ]
+        common_result_fields = {
+            "experiment": name,
+            "feature_set": feature_set,
+            "source_sampling_rate": args.sampling_rate,
+            "downsample_factor": downsample_factor,
+            "effective_sampling_rate": effective_sampling_rate,
+            "reference_window_samples": args.window_samples,
+            "window_samples": effective_window_samples,
+            "fft_points": effective_window_samples,
+            "source_hop_samples": args.reference_hop_samples,
+            "hop_samples": effective_hop_samples,
+            "window_duration_ms": window_duration_ms,
+            "update_period_ms": update_period_ms,
+            "overlap": args.overlap,
+            "edge_guard_ms": args.edge_guard_ms,
+            "low_hz": args.low_hz,
+            "high_hz": args.high_hz,
+            "effective_high_hz": effective_high_hz,
+            "filter_order": args.filter_order,
+            "aa_passband_ripple_db": args.aa_passband_ripple_db,
+            "aa_stopband_attenuation_db": (
+                args.aa_stopband_attenuation_db
+            ),
+            "features": "+".join(features),
+            "feature_count": len(features),
+        }
 
         try:
-            if preprocessing_key not in extracted_configurations:
+            if downsample_factor not in extracted_downsample_factors:
                 run_command(
                     train_extract_command,
                     cached_dir / "train_extract.log",
@@ -287,7 +445,7 @@ def main() -> int:
                     validation_extract_command,
                     cached_dir / "validation_extract.log",
                 )
-                extracted_configurations.add(preprocessing_key)
+                extracted_downsample_factors.add(downsample_factor)
             run_command(train_command, experiment_dir / "train.log")
             run_command(
                 validation_command,
@@ -297,16 +455,11 @@ def main() -> int:
             matrix = metrics["confusion_matrix"]
             rows.append({
                 "status": "ok",
-                "experiment": name,
-                "target_fs": target_fs,
-                "window_ms": window_ms,
-                "overlap": overlap,
-                "features": "+".join(features),
-                "feature_count": len(features),
+                **common_result_fields,
                 "train_windows": metrics["train_windows"],
-                "train_trials": metrics["train_trials"],
+                "train_sessions": metrics["train_sessions"],
                 "validation_windows": metrics["validation_windows"],
-                "validation_trials": metrics["validation_trials"],
+                "validation_sessions": metrics["validation_sessions"],
                 "accuracy": metrics["accuracy"],
                 "balanced_accuracy": metrics["balanced_accuracy"],
                 "f1": metrics["f1"],
@@ -320,12 +473,7 @@ def main() -> int:
         except Exception as exc:
             rows.append({
                 "status": "failed",
-                "experiment": name,
-                "target_fs": target_fs,
-                "window_ms": window_ms,
-                "overlap": overlap,
-                "features": "+".join(features),
-                "feature_count": len(features),
+                **common_result_fields,
                 "elapsed_seconds": round(time.monotonic() - start_time, 3),
                 "error": str(exc),
             })

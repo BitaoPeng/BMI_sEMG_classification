@@ -499,6 +499,8 @@ class MainWindow(QtWidgets.QMainWindow):
         requested_baud: Optional[int] = None,
         autoconnect: bool = False,
         apply_offsets: bool = True,
+        sampling_rate: int = 500,
+        save_dir: Optional[Path] = None,
     ):
         super().__init__()
         self.config = config
@@ -514,21 +516,31 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.csv_file = None
         self.csv_writer = None
+        self.recording_temp_path: Optional[Path] = None
         self.record_rows_since_flush = 0
         self.session_start_monotonic = time.monotonic()
 
         # Recording state
-        self.recording_mode: Optional[str] = None  # None | "bend" | "relax"
+        self.recording_mode: Optional[str] = None  # None | "session"
         self.recording_elapsed: float = 0.0
         self.recording_sample_count: int = 0
-        self.target_samples: int = 2500  # 5 s × 500 samples/s
+        self.recording_start_monotonic = time.monotonic()
+        self.sampling_rate = sampling_rate
 
-        # Auto-save: counter naming + save directory
+        # GUI虚拟按钮标签：松开为0=Relax，按住为1=Clench。
+        # 该标签在GUI线程收到一批串口样本时写入CSV，因此并非严格硬件同步；
+        # 后续离线特征提取会丢弃每次标签边沿前后50 ms的窗口。
+        self.button_label: int = 0
+
+        # 默认保存到项目根目录data_with_button；停止后由用户输入session编号。
         script_dir = Path(__file__).resolve().parent
-        self.save_dir = script_dir.parent / "data_saved"
+        self.save_dir = (
+            save_dir.resolve()
+            if save_dir is not None
+            else script_dir / "data_with_button"
+        )
         self.save_dir.mkdir(parents=True, exist_ok=True)
-        self.bend_counter, self.relax_counter = self._scan_counters()
-        self.current_action: str = ""  # "bend" | "relax" | ""
+        self.session_counter = self._scan_session_counter()
 
         self.setWindowTitle("EMG USART Viewer — AA BB + 4×int16 LE")
         self.resize(1200, 820)
@@ -590,19 +602,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.connect_button.clicked.connect(self.toggle_connection)
         controls.addWidget(self.connect_button, 0, 5)
 
-        self.record_bend_button = QtWidgets.QPushButton("💪 弯曲 5s")
-        self.record_bend_button.setFixedWidth(125)
-        self.record_bend_button.clicked.connect(
-            self.start_bend_recording
+        # 连续Session录制：一次CSV中同时包含Relax和Clench状态。
+        self.record_session_button = QtWidgets.QPushButton("Start session")
+        self.record_session_button.setFixedWidth(125)
+        self.record_session_button.clicked.connect(
+            self.toggle_session_recording
         )
-        controls.addWidget(self.record_bend_button, 0, 6)
+        self.record_session_button.setEnabled(False)
+        controls.addWidget(self.record_session_button, 0, 6)
 
-        self.record_relax_button = QtWidgets.QPushButton("🖐 伸直 5s")
-        self.record_relax_button.setFixedWidth(125)
-        self.record_relax_button.clicked.connect(
-            self.start_relax_recording
+        # 按住时button_label=1，松开时button_label=0。
+        # 使用pressed/released而不是clicked，才能表达持续状态。
+        self.clench_label_button = QtWidgets.QPushButton(
+            "Hold: Clench (1)"
         )
-        controls.addWidget(self.record_relax_button, 0, 7)
+        self.clench_label_button.setFixedWidth(145)
+        self.clench_label_button.pressed.connect(
+            self.on_clench_button_pressed
+        )
+        self.clench_label_button.released.connect(
+            self.on_clench_button_released
+        )
+        self.clench_label_button.setEnabled(False)
+        controls.addWidget(self.clench_label_button, 0, 7)
 
         self.clear_button = QtWidgets.QPushButton("Clear plot")
         self.clear_button.clicked.connect(self.clear_data)
@@ -800,15 +822,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.port_box.setEnabled(False)
         self.baud_box.setEnabled(False)
         self.refresh_button.setEnabled(False)
+        self.record_session_button.setEnabled(True)
         self.status_label.setText(f"Connected: {port}")
 
     @QtCore.Slot()
     def on_disconnected(self) -> None:
+        if self.recording_mode is not None:
+            self.stop_recording()
         self.connect_button.setText("Connect")
         self.connect_button.setEnabled(True)
         self.port_box.setEnabled(True)
         self.baud_box.setEnabled(True)
         self.refresh_button.setEnabled(True)
+        self.record_session_button.setEnabled(False)
 
         if not self.status_label.text().startswith("Error"):
             self.status_label.setText("Disconnected")
@@ -842,7 +868,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.csv_writer is not None:
             try:
                 display_samples = self.processed_samples(raw_samples)
-                elapsed = time.monotonic() - self.session_start_monotonic
                 iso_time = datetime.fromtimestamp(
                     receive_time
                 ).astimezone().isoformat(timespec="milliseconds")
@@ -850,11 +875,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 for row_index, (raw_row, shown_row) in enumerate(
                     zip(raw_samples, display_samples)
                 ):
+                    # 用采样计数而不是GUI事件时间生成录制内时间轴。
+                    recording_index = self.recording_sample_count + row_index
+                    recording_elapsed = recording_index / self.sampling_rate
                     self.csv_writer.writerow(
                         [
                             first_frame_index + row_index,
                             iso_time,
-                            f"{elapsed:.6f}",
+                            recording_index,
+                            f"{recording_elapsed:.6f}",
+                            self.button_label,
                             *[int(v) for v in raw_row],
                             *[f"{float(v):.6f}" for v in shown_row],
                         ]
@@ -865,10 +895,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.csv_file.flush()
                     self.record_rows_since_flush = 0
 
-                # Track samples for duration display and auto-stop
+                # Track samples for duration display. Session由用户手动停止。
                 self.recording_sample_count += raw_samples.shape[0]
-                if self.recording_sample_count >= self.target_samples:
-                    self.stop_recording()
             except (OSError, ValueError, OverflowError) as exc:
                 print(
                     f"CSV write error: {exc}",
@@ -974,43 +1002,54 @@ class MainWindow(QtWidgets.QMainWindow):
         for curve in self.curves:
             curve.clear()
 
-    # ── Recording: auto-save helpers ──────────────────────────
+    # ── Recording: continuous labelled session helpers ────────
 
-    def _scan_counters(self) -> tuple[int, int]:
-        """Scan save_dir for existing files and return (bend_max, relax_max)."""
-        bend_max = 0
-        relax_max = 0
+    def _scan_session_counter(self) -> int:
+        """扫描已有session_*.csv，返回当前最大的编号。"""
+        session_max = 0
         if self.save_dir.exists():
-            for f in self.save_dir.glob("bend_*.csv"):
+            for path in self.save_dir.glob("session_*.csv"):
                 try:
-                    n = int(f.stem.split("_")[1])
-                    bend_max = max(bend_max, n)
+                    number = int(path.stem.split("_")[1])
+                    session_max = max(session_max, number)
                 except (ValueError, IndexError):
                     pass
-            for f in self.save_dir.glob("relax_*.csv"):
-                try:
-                    n = int(f.stem.split("_")[1])
-                    relax_max = max(relax_max, n)
-                except (ValueError, IndexError):
-                    pass
-        return bend_max, relax_max
+        return session_max
 
-    def _next_filename(self, action: str) -> Path:
-        """Generate the next counter-based filename and increment the counter."""
-        if action == "bend":
-            self.bend_counter += 1
-            return self.save_dir / f"bend_{self.bend_counter:03d}.csv"
-        else:
-            self.relax_counter += 1
-            return self.save_dir / f"relax_{self.relax_counter:03d}.csv"
+    def _existing_session_path(self, number: int) -> Optional[Path]:
+        """按数字检查session_x是否已存在，也识别session_001等零填充名称。"""
+        for path in self.save_dir.glob("session_*.csv"):
+            try:
+                if int(path.stem.split("_")[1]) == number:
+                    return path
+            except (ValueError, IndexError):
+                continue
+        return None
 
-    def _start_recording(self, action: str) -> bool:
-        """Open CSV via auto-save and write header.  Return True on success."""
-        filepath = self._next_filename(action)
+    def _new_recording_temp_path(self) -> Path:
+        """为正在录制的数据生成唯一临时文件名，绝不覆盖已有文件。"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        base_path = self.save_dir / f".recording_{timestamp}.csv"
+        if not base_path.exists():
+            return base_path
+
+        suffix = 1
+        while True:
+            candidate = self.save_dir / (
+                f".recording_{timestamp}_{suffix}.csv"
+            )
+            if not candidate.exists():
+                return candidate
+            suffix += 1
+
+    def _start_recording(self) -> bool:
+        """创建临时CSV并写入包含button_label的表头。"""
+        filepath = self._new_recording_temp_path()
         try:
             self.csv_file = open(
-                str(filepath), "w", newline="", encoding="utf-8"
+                str(filepath), "x", newline="", encoding="utf-8"
             )
+            self.recording_temp_path = filepath
             self.csv_writer = csv.writer(self.csv_file)
 
             raw_headers = [
@@ -1023,7 +1062,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 [
                     "frame_index",
                     "host_receive_time",
-                    "elapsed_s",
+                    "recording_sample_index",
+                    "recording_elapsed_s",
+                    "button_label",
                     *raw_headers,
                     *display_headers,
                 ]
@@ -1034,22 +1075,105 @@ class MainWindow(QtWidgets.QMainWindow):
         except OSError as exc:
             self.csv_file = None
             self.csv_writer = None
+            self.recording_temp_path = None
             QtWidgets.QMessageBox.critical(
                 self, "Cannot create CSV file", str(exc)
             )
             return False
 
-    def _recording_started(self, action: str) -> None:
-        """Common state update when recording begins."""
-        self.recording_mode = action
+    def _prompt_and_finalize_recording(
+        self,
+        temp_path: Path,
+        sample_count: int,
+    ) -> Optional[Path]:
+        """停止录制后询问x，并把临时文件安全命名为session_x.csv。"""
+        suggested_number = max(
+            self.session_counter,
+            self._scan_session_counter(),
+        ) + 1
+
+        while True:
+            number, accepted = QtWidgets.QInputDialog.getInt(
+                self,
+                "Save labelled session",
+                (
+                    "Enter x for session_x.csv:\n"
+                    f"Recorded samples: {sample_count}"
+                ),
+                suggested_number,
+                1,
+                999999,
+                1,
+            )
+            if not accepted:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Session name not selected",
+                    (
+                        "The recording was not deleted. It remains at:\n"
+                        f"{temp_path}\n\n"
+                        "Rename it manually or keep it as a recovery file."
+                    ),
+                )
+                return None
+
+            existing_path = self._existing_session_path(number)
+            if existing_path is not None:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Session already exists",
+                    (
+                        f"Session number {number} is already used by:\n"
+                        f"{existing_path.name}\n\n"
+                        "Choose another number. Existing CSV files are never "
+                        "overwritten."
+                    ),
+                )
+                suggested_number = max(
+                    number + 1,
+                    self._scan_session_counter() + 1,
+                )
+                continue
+
+            destination = self.save_dir / f"session_{number}.csv"
+            try:
+                temp_path.rename(destination)
+            except OSError as exc:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Cannot save session",
+                    (
+                        f"Could not rename the temporary recording:\n{exc}\n\n"
+                        f"The data remains at:\n{temp_path}"
+                    ),
+                )
+                return None
+
+            self.session_counter = max(self.session_counter, number)
+            QtWidgets.QMessageBox.information(
+                self,
+                "Session saved",
+                (
+                    f"Saved {sample_count} labelled samples to:\n"
+                    f"{destination}"
+                ),
+            )
+            return destination
+
+    def _recording_started(self) -> None:
+        """初始化连续Session；开始时默认处于Relax（label=0）。"""
+        self.recording_mode = "session"
         self.recording_elapsed = 0.0
         self.recording_sample_count = 0
-        self.current_action = action
+        self.recording_start_monotonic = time.monotonic()
+        self.button_label = 0
         self.recording_timer.start()
         self._update_recording_ui_state()
 
     def stop_recording(self) -> None:
-        """Stop any active recording and close the CSV file."""
+        """停止录制、关闭CSV，并询问最终session_x文件名。"""
+        temp_path = self.recording_temp_path
+        sample_count = self.recording_sample_count
         if self.csv_file is not None:
             try:
                 self.csv_file.flush()
@@ -1059,22 +1183,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.csv_file = None
         self.csv_writer = None
+        self.recording_temp_path = None
         self.recording_mode = None
-        self.current_action = ""
+        self.button_label = 0
         self.recording_timer.stop()
         self._update_recording_ui_state()
+
+        if temp_path is not None and temp_path.exists():
+            self._prompt_and_finalize_recording(temp_path, sample_count)
 
     def _update_recording_ui_state(self) -> None:
         """Enable/disable buttons and labels according to recording mode."""
         recording = self.recording_mode is not None
-        self.record_bend_button.setEnabled(not recording)
-        self.record_relax_button.setEnabled(not recording)
+        self.record_session_button.setText(
+            "Stop session" if recording else "Start session"
+        )
+        self.clench_label_button.setEnabled(recording)
 
         if not recording:
             self.recording_duration_label.setText("")
             self.recording_duration_label.setStyleSheet("")
             self.action_label.setText("")
             self.action_label.setStyleSheet("")
+            self.clench_label_button.setDown(False)
 
     @QtCore.Slot()
     def update_recording_display(self) -> None:
@@ -1082,14 +1213,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.recording_mode is None:
             return
 
-        # Accurate elapsed time from sample count (500 samples/s)
-        self.recording_elapsed = self.recording_sample_count / 500.0
+        # 使用采样数量计算时间，避免GUI定时器和串口批量接收造成累计误差。
+        self.recording_elapsed = (
+            self.recording_sample_count / self.sampling_rate
+        )
         minutes = int(self.recording_elapsed // 60)
         seconds = self.recording_elapsed % 60
 
         text = (
             f"⏺ {minutes:01d}:{seconds:04.1f} │ "
-            f"{self.recording_sample_count}/{self.target_samples}"
+            f"{self.recording_sample_count} samples"
         )
         self.recording_duration_label.setText(text)
         self.recording_duration_label.setStyleSheet(
@@ -1097,13 +1230,13 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         # Large action indicator
-        if self.recording_mode == "bend":
-            self.action_label.setText("💪  弯  曲  💪")
+        if self.button_label == 1:
+            self.action_label.setText("💪  CLENCH  │  LABEL 1")
             self.action_label.setStyleSheet(
                 "color: #ff4444; font-weight: bold;"
             )
         else:
-            self.action_label.setText("🖐  伸  直  🖐")
+            self.action_label.setText("🖐  RELAX  │  LABEL 0")
             self.action_label.setStyleSheet(
                 "color: #44aaff; font-weight: bold;"
             )
@@ -1111,22 +1244,29 @@ class MainWindow(QtWidgets.QMainWindow):
     # ── Recording: button callbacks ───────────────────────────
 
     @QtCore.Slot()
-    def start_bend_recording(self) -> None:
-        """Start a 5-second bend recording."""
+    def toggle_session_recording(self) -> None:
+        """开始或停止一份同时包含Relax/Clench的连续Session。"""
         if self.recording_mode is not None:
+            self.stop_recording()
             return
-        if not self._start_recording("bend"):
+        if not self._start_recording():
             return
-        self._recording_started("bend")
+        self._recording_started()
 
     @QtCore.Slot()
-    def start_relax_recording(self) -> None:
-        """Start a 5-second relax recording."""
+    def on_clench_button_pressed(self) -> None:
+        """GUI按钮按下：从此刻起写入button_label=1。"""
+        if self.recording_mode is None:
+            return
+        self.button_label = 1
+        self.update_recording_display()
+
+    @QtCore.Slot()
+    def on_clench_button_released(self) -> None:
+        """GUI按钮松开：从此刻起写入button_label=0。"""
+        self.button_label = 0
         if self.recording_mode is not None:
-            return
-        if not self._start_recording("relax"):
-            return
-        self._recording_started("relax")
+            self.update_recording_display()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.stop_recording()
@@ -1167,6 +1307,21 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Number of samples retained in the live plot.",
     )
     parser.add_argument(
+        "--sampling-rate",
+        type=int,
+        default=500,
+        help="Expected sample rate used for recording timestamps (default: 500).",
+    )
+    parser.add_argument(
+        "--save-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory for labelled session_*.csv files. Default: "
+            "<project>/data_with_button."
+        ),
+    )
+    parser.add_argument(
         "--autoconnect",
         action="store_true",
         help="Open the selected serial port after the GUI starts.",
@@ -1188,6 +1343,8 @@ def main() -> int:
             if args.samples <= 0:
                 raise ValueError("--samples must be positive.")
             config.num_samples = args.samples
+        if args.sampling_rate <= 0:
+            raise ValueError("--sampling-rate must be positive.")
         config.validate()
     except (OSError, ValueError, configparser.Error) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
@@ -1203,6 +1360,8 @@ def main() -> int:
         requested_baud=args.baud,
         autoconnect=args.autoconnect,
         apply_offsets=not args.raw,
+        sampling_rate=args.sampling_rate,
+        save_dir=args.save_dir,
     )
     window.show()
     return app.exec()

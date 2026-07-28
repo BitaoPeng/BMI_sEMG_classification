@@ -1,0 +1,156 @@
+===== PAGE 1 =====
+Hierarchical Closed-loop BMI for Personalized
+Dysmenorrhea Relief and Cognitive/Emotional
+Stability Using fNIRS-tACS
+Bitao Peng
+18/2/2026
+Executive Summary
+To manage primary dysmenorrhea and associated cognitive/emotional symptoms, this project
+proposes a non-invasive, hierarchical closed-loop BMI. With Reinforcement Learning (RL) for
+adaptive Transcranial Alternating Current Stimulation (tACS) modulation and TinyML-enabled
+fNIRS for deep-brain activity inference, the system offers personalized, drug-free pain manage-
+ment. The hierarchical control strategy prioritizes pain alleviation while maintaining cognitive
+productivity, and this wearable device transfers menstrual health management from passive
+tracking to active and intelligent intervention via an edge SoC.
+1
+System Architecture
+Edge AI SoC (TinyML)
+User
+(PFC/ACC)
+16-Ch.
+fNIRS
+AFE
+CNN
+Denoising
+TinyML SVR
+(Pain Inf.)
+Hierarchical
+RL Con-
+troller
+Adaptive
+tACS
+HDR
+Closed-Loop Feedback
+Figure 1: System Architecture: Integrated closed-loop fNIRS-tACS BMI system.
+2
+Introduction
+Primary Dysmenorrhea (PD) is a significant global health concern which affects approximately
+80% of women at some stage between menarche and menopause [1]. For 40% of these individ-
+uals, they are even experiencing a complex of systemic symptoms, such as depression, reduced
+concentration, and severe mood swings triggered by hormonal fluctuations [1,2]. These recurring
+episodes lead to noticeable absenteeism from academic and professional activities, consequently
+impacting women’s social well-being and overall quality of life [2]. Despite this burden, existing
+interventions are suboptimal: non-steroidal anti-inflammatory drugs (NSAIDs) frequently have
+gastrointestinal adverse effects, and hormonal contraceptives are unsuitable for adolescents due
+to their potential interference with developmental growth.
+1
+
+
+===== PAGE 2 =====
+Brain-Machine Interfaces (BMIs) offer a new way to assist in this context. Neuroimaging has
+identified objective biomarkers for pain within the Anterior Cingulate Cortex (ACC) and Or-
+bitofrontal Cortex (OFC) [3,4]; thus, the evaluation of pain has moved from subjective self-report
+to quantified neural metrics. Women with PD exhibit abnormal functional connectivity within
+the ACC [5].
+Crucially, a closed-loop architecture is employed instead of manual control for several reasons:
+first, it relieves the user’s cognitive burden of evaluating pain themselves when in distress;
+second, it guarantees precise ”demand-based” stimulus dosing to prevent underdosing or over-
+dosing due to users misjudging their pain levels. Furthermore, a closed-loop system enables
+predictive intervention and preemptive suppression of pain signals before they reach personal-
+ized, debilitating thresholds. Although these studies were based on invasive electrodes, recent
+computational advancements demonstrate functional Near-Infrared Spectroscopy (fNIRS) can
+reliably infer deep-brain activity (e.g., in the ACC) from cortical surface signals [6].
+This project proposes a hierarchical closed-loop BMI utilizing non-invasive fNIRS and RL. fNIRS
+is chosen over EEG due to its better motion tolerance, and practical convenience, as it eliminates
+the need for applying conductive gels to female users with long hair. The ”hierarchical” approach
+is twofold: temporally, it uses a dual-mode detection technique that monitors constant baseline
+discomfort alongside acute uterine cramps [4]; functionally, the RL-based controller prioritizes
+pain mitigation over emotional stabilization. Furthermore, AI deployment enables cross-subject
+learning, hence personalization, and autonomous adaptation of the signal processing algorithm
+over time due to signal quality degradation and neural plasticity.
+By integrating predictive
+algorithms and a lightweight, portable form factor to ensure long-term user compliance, this
+personalized system offers a safe, drug-free solution for women to stay active and productive
+throughout their menstrual cycles.
+3
+Methodology
+The proposed system is designed as a low-power, real-time closed-loop BMI using embedded
+TinyML techniques.
+3.1
+Signal Acquisition and Conditioning
+A 16-channel fNIRS analog front-end (AFE) acquires hemodynamic signals from the prefrontal
+cortex (PFC). To mitigate motion artifacts caused by muscle contractions during acute cramps,
+a convolutional neural network (CNN)-based denoising algorithm is employed for real-time signal
+preprocessing.
+3.2
+Cross-Modal Deep-Brain Inference
+Due to the limited penetration depth of fNIRS, direct measurement of ACC activity is infeasible.
+Instead, a pre-trained support vector regression (SVR) model infers ACC activation by analyzing
+high-dimensional functional connectivity patterns extracted from surface PFC signals [6]. This
+inference model is deployed using TinyML techniques, enabling efficient execution within the
+memory and computational constraints of edge AI hardware.
+2
+
+
+===== PAGE 3 =====
+3.3
+Hierarchical Reinforcement Learning Control
+A RL agent adaptively controls the tACS stimulator (e.g., α-band, < 2 mA) by tuning stim-
+ulation frequency and amplitude [7], and it incorporates a predictive gradient analysis of the
+inferred ACC signal, which initiates preemptive tACS modulation when the rate of pain signal
+exceeds a personalized threshold.
+• State Space: Inferred ACC pain biomarkers and direct PFC cognitive workload indi-
+cators.
+• Action Space: Real-time updates of tACS parameter sets.
+• Reward Function: Primary optimization focuses on minimizing pain-related neural
+activity. Once pain is suppressed below a predefined threshold, secondary optimization
+maximizes cognitive focus and emotional stability.
+The pain alleviation controller operates in a dual-mode manner: a tonic mode provides baseline
+compensation for persistent discomfort, while an acute mode delivers transient, higher-intensity
+stimulation in response to sudden cramp-related pain spikes.
+3.4
+Evaluation Metrics
+• Pain Relief Efficacy: Reduction in objective pain intensity inferred from ACC activity.
+• Cognitive Resilience: Performance improvement in standardized cognitive tasks dur-
+ing stimulation.
+4
+Timeline
+• months 1: Literature review on neural pain biomarkers.
+• months 2: Hardware integration of the 16-channel fNIRS AFE and tACS stimulator
+onto a prototype PCB.
+• months 3–5: TinyML preprocessing and feature extraction; implementation of CNN
+denoising and SVR-based ACC inference.
+• months 6–8: Design and training of the hierarchical RL controller using open-source
+hemodynamic datasets.
+• months 9–11: System testing during menstrual cycles; evaluation against open-loop
+control (optional).
+• months 10: Final report preparation and presentation.
+References
+[1] P.
+Gupta,
+“Period
+pain.”
+Available:
+https://www.womens-health-concern.org/
+wp-content/uploads/2022/12/20-WHC-FACTSHEET-Period-Pain-NOV2022-B.pdf,
+Nov.
+2022.
+3
+
+
+===== PAGE 4 =====
+[2] S. Liu et al., “Prevalence of menstrual pain and symptoms and their association with age
+and BMI among Japanese female app users,” Scientific Reports, vol. 15, May 2025.
+[3] Q. Zhang et al., “A prototype closed-loop brain–machine interface for the study and treat-
+ment of pain,” Nature Biomedical Engineering, pp. 1–13, June 2021.
+[4] P. Shirvalkar et al., “First-in-human prediction of chronic pain state using intracranial neural
+biomarkers,” Nature Neuroscience, vol. 26, pp. 1090–1099, June 2023.
+[5] P. Liu et al., “Changes of functional connectivity of the anterior cingulate cortex in women
+with primary dysmenorrhea,” Brain Imaging and Behavior, vol. 12, pp. 710–717, May 2017.
+[6] N. Liu, X. Cui, D. M. Bryant, G. H. Glover, and A. L. Reiss, “Inferring deep-brain ac-
+tivity from cortical activity using functional near-infrared spectroscopy,” Biomedical Optics
+Express, vol. 6, p. 1074, Feb. 2015.
+[7] E. S. May et al., “Modulating brain rhythms of pain using transcranial alternating current
+stimulation (tACS) - A sham-controlled study in healthy human participants,” The Journal
+of Pain, vol. 22, pp. 1256–1272, Oct. 2021.
+4

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""加载 train_svm.py 保存的模型，并在独立验证集上评价。
+"""在独立验证目录的稳定状态窗口上评价已训练的 Linear SVM。
 
 本文件不会训练或重新拟合模型，不会调用 model.fit()。
 
@@ -28,7 +28,7 @@ from sklearn.metrics import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate a trained relax/bend Linear SVM."
+        description="Validate a trained relax/clench window-state Linear SVM."
     )
     parser.add_argument(
         "--model-input",
@@ -54,20 +54,25 @@ def load_artifact(path: Path) -> dict:
     """读取模型包，并检查它是否由新版 train_svm.py 生成。"""
     artifact = joblib.load(path)
     required = {
-        "model", "features", "c", "training_input",
-        "train_windows", "train_trials",
+        "model", "features", "c", "training_input", "train_windows",
+        "train_sessions", "classification_level",
     }
     if not isinstance(artifact, dict) or not required <= set(artifact):
         raise ValueError(
             "Unsupported model file. Retrain it with the current "
             "train_svm.py before validation."
         )
+    if artifact["classification_level"] != "window_state":
+        raise ValueError(
+            "This model is not a window-state classifier. Retrain it with "
+            "the current train_svm.py."
+        )
     return artifact
 
 
 def validate_frame(frame: pd.DataFrame, features: list[str]) -> None:
-    """确认验证集包含模型需要的特征、trial_id和两种标签。"""
-    required = {"trial_id", "label_id", *features}
+    """确认验证集包含模型需要的特征、session_id和两种窗口标签。"""
+    required = {"session_id", "label_id", *features}
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(
@@ -79,6 +84,7 @@ def validate_frame(frame: pd.DataFrame, features: list[str]) -> None:
         raise ValueError(
             "Validation label_id must contain both classes 0 and 1."
         )
+    # 同一 session 中存在多行重叠窗口是预期行为，不在这里随机拆分或去重。
 
 
 def main() -> int:
@@ -100,32 +106,29 @@ def main() -> int:
     matrix = confusion_matrix(
         validation_y, prediction, labels=[0, 1]
     )
-    validation_trials = int(frame["trial_id"].astype(str).nunique())
+    validation_windows = len(frame)
+    validation_sessions = int(frame["session_id"].astype(str).nunique())
 
     print(f"Model input: {args.model_input}")
     print(f"Training input: {artifact['training_input']}")
     print(f"Validation input: {args.validation_input}")
     print(f"Features ({len(features)}): {features}")
-    print(
-        f"Training windows: {artifact['train_windows']}, "
-        f"trials: {artifact['train_trials']}"
-    )
-    print(
-        f"Validation windows: {len(frame)}, "
-        f"trials: {validation_trials}"
-    )
-    print("\nIndependent validation metrics")
-    print(f"accuracy: {accuracy:.4f}")
-    print(f"balanced_accuracy: {balanced:.4f}")
-    print(f"F1: {f1:.4f}")
-    print("\nValidation confusion matrix [relax, bend]:")
+    print(f"Training windows: {artifact['train_windows']}")
+    print(f"Training sessions: {artifact['train_sessions']}")
+    print(f"Validation windows: {validation_windows}")
+    print(f"Validation sessions: {validation_sessions}")
+    print("\nIndependent window-level validation metrics")
+    print(f"window_accuracy: {accuracy:.4f}")
+    print(f"window_balanced_accuracy: {balanced:.4f}")
+    print(f"window_F1 (positive class=clench): {f1:.4f}")
+    print("\nWindow confusion matrix [relax, clench]:")
     print(matrix)
     print("\nValidation classification report:")
     print(classification_report(
         validation_y,
         prediction,
         labels=[0, 1],
-        target_names=["relax", "bend"],
+        target_names=["relax", "clench"],
         digits=4,
         zero_division=0,
     ))
@@ -138,10 +141,12 @@ def main() -> int:
             "validation_input": str(args.validation_input),
             "features": features,
             "c": artifact["c"],
+            "classification_level": "window_state",
+            "labels": {"0": "relax", "1": "clench"},
             "train_windows": artifact["train_windows"],
-            "train_trials": artifact["train_trials"],
-            "validation_windows": len(frame),
-            "validation_trials": validation_trials,
+            "train_sessions": artifact["train_sessions"],
+            "validation_windows": validation_windows,
+            "validation_sessions": validation_sessions,
             "accuracy": float(accuracy),
             "balanced_accuracy": float(balanced),
             "f1": float(f1),
