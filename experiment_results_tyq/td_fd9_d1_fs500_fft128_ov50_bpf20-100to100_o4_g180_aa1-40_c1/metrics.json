@@ -1,0 +1,40 @@
+{
+  "evaluation_mode": "independent_validation",
+  "model_input": "experiment_results_tyq\\td_fd9_d1_fs500_fft128_ov50_bpf20-100to100_o4_g180_aa1-40_c1\\linear_svm.joblib",
+  "training_input": "experiment_results_tyq\\_feature_cache\\srcfs500_d1_fs500_win128to128_hop64to64_ov50_guard180_bpf20-100to100_o4_aa1-40\\train_features.csv",
+  "validation_input": "experiment_results_tyq\\_feature_cache\\srcfs500_d1_fs500_win128to128_hop64to64_ov50_guard180_bpf20-100to100_o4_aa1-40\\validation_features.csv",
+  "features": [
+    "mav",
+    "rms",
+    "wl",
+    "zc",
+    "ssc",
+    "mnf",
+    "mdf",
+    "pkf",
+    "bandpower"
+  ],
+  "c": 1.0,
+  "classification_level": "window_state",
+  "labels": {
+    "0": "relax",
+    "1": "clench"
+  },
+  "train_windows": 152,
+  "train_sessions": 1,
+  "validation_windows": 169,
+  "validation_sessions": 1,
+  "accuracy": 0.9644970414201184,
+  "balanced_accuracy": 0.963855421686747,
+  "f1": 0.9625,
+  "confusion_matrix": [
+    [
+      86,
+      0
+    ],
+    [
+      6,
+      77
+    ]
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "feature_order": [
+    "mav",
+    "rms",
+    "wl"
+  ],
+  "feature_dimension": 3,
+  "labels": {
+    "0": "relax",
+    "1": "clench"
+  },
+  "c": 1.0,
+  "scaler_mean": [
+    11.292637900453878,
+    14.400371981892114,
+    1224.3899658720463
+  ],
+  "scaler_scale": [
+    10.30839159817625,
+    14.10051602758541,
+    1109.9240813603465
+  ],
+  "svm_weight": [
+    1.1549264702567024,
+    -1.1554973692512718,
+    2.1591462779915447
+  ],
+  "svm_bias": 0.9729323006580339,
+  "merged_svm_weight_raw_feature_space": [
+    0.11203750451826362,
+    -0.0819471689540103,
+    0.0019453098768208086
+  ],
+  "merged_svm_bias_raw_feature_space": -1.4940148470276575,
+  "decision_rule": "score=sum(merged_svm_weight_raw_feature_space[i]*x[i])+merged_svm_bias_raw_feature_space; score>=0 => clench, else relax",
+  "hardware_timing_metrics": {
+    "preprocessing_total_us": "anti-alias filtering and decimation when D>1, BPF, plus all selected time/frequency features including FFT",
+    "svm_inference_us": "merged linear dot product plus decision",
+    "total_pipeline_us": "preprocessing_total_us + svm_inference_us"
+  }
+}
