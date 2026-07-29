@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""在独立验证目录的稳定状态窗口上评价已训练的 Linear SVM。
+"""在独立验证目录的全部完整窗口上评价已训练的 Linear SVM。
 
 本文件不会训练或重新拟合模型，不会调用 model.fit()。
 
@@ -71,8 +71,13 @@ def load_artifact(path: Path) -> dict:
 
 
 def validate_frame(frame: pd.DataFrame, features: list[str]) -> None:
-    """确认验证集包含模型需要的特征、session_id和两种窗口标签。"""
-    required = {"session_id", "label_id", *features}
+    """确认验证集包含模型特征、窗口标签和 transition-band 审计列。"""
+    required = {
+        "session_id",
+        "label_id",
+        "intersects_transition_band",
+        *features,
+    }
     missing = required - set(frame.columns)
     if missing:
         raise ValueError(
@@ -85,6 +90,50 @@ def validate_frame(frame: pd.DataFrame, features: list[str]) -> None:
             "Validation label_id must contain both classes 0 and 1."
         )
     # 同一 session 中存在多行重叠窗口是预期行为，不在这里随机拆分或去重。
+
+
+def binary_metric_summary(
+    truth: np.ndarray,
+    prediction: np.ndarray,
+) -> dict:
+    """计算窗口指标；子集缺少某一类时 balanced accuracy 记为 null。"""
+    labels_present = set(np.unique(truth).tolist())
+    balanced = (
+        float(balanced_accuracy_score(truth, prediction))
+        if labels_present == {0, 1}
+        else None
+    )
+    matrix = confusion_matrix(truth, prediction, labels=[0, 1])
+    return {
+        "windows": int(truth.size),
+        "class_counts": {
+            "relax": int(np.count_nonzero(truth == 0)),
+            "clench": int(np.count_nonzero(truth == 1)),
+        },
+        "accuracy": float(accuracy_score(truth, prediction)),
+        "balanced_accuracy": balanced,
+        "f1": float(f1_score(truth, prediction, zero_division=0)),
+        "confusion_matrix": matrix.tolist(),
+    }
+
+
+def read_boolean_audit_column(frame: pd.DataFrame, name: str) -> np.ndarray:
+    """把 CSV 中 bool/0/1/True/False 审计列严格转换为布尔数组。"""
+    normalized = frame[name].astype(str).str.strip().str.lower()
+    mapping = {
+        "true": True,
+        "false": False,
+        "1": True,
+        "0": False,
+    }
+    converted = normalized.map(mapping)
+    if converted.isna().any():
+        invalid = sorted(normalized[converted.isna()].unique().tolist())
+        raise ValueError(
+            f"Validation column {name} must contain bool/0/1; "
+            f"found {invalid}."
+        )
+    return converted.to_numpy(dtype=bool)
 
 
 def main() -> int:
@@ -100,12 +149,20 @@ def main() -> int:
 
     # 只调用 predict()，不调用 fit()；验证集不会修改任何模型参数。
     prediction = model.predict(validation_x)
-    accuracy = accuracy_score(validation_y, prediction)
-    balanced = balanced_accuracy_score(validation_y, prediction)
-    f1 = f1_score(validation_y, prediction)
-    matrix = confusion_matrix(
-        validation_y, prediction, labels=[0, 1]
+    overall_metrics = binary_metric_summary(validation_y, prediction)
+    transition_mask = read_boolean_audit_column(
+        frame, "intersects_transition_band"
     )
+    subset_metrics = {}
+    for name, mask in {
+        "outside_transition_band": ~transition_mask,
+        "intersects_transition_band": transition_mask,
+    }.items():
+        subset_metrics[name] = (
+            binary_metric_summary(validation_y[mask], prediction[mask])
+            if np.any(mask)
+            else None
+        )
     validation_windows = len(frame)
     validation_sessions = int(frame["session_id"].astype(str).nunique())
 
@@ -118,11 +175,33 @@ def main() -> int:
     print(f"Validation windows: {validation_windows}")
     print(f"Validation sessions: {validation_sessions}")
     print("\nIndependent window-level validation metrics")
-    print(f"window_accuracy: {accuracy:.4f}")
-    print(f"window_balanced_accuracy: {balanced:.4f}")
-    print(f"window_F1 (positive class=clench): {f1:.4f}")
+    print(f"window_accuracy: {overall_metrics['accuracy']:.4f}")
+    print(
+        "window_balanced_accuracy: "
+        f"{overall_metrics['balanced_accuracy']:.4f}"
+    )
+    print(
+        "window_F1 (positive class=clench): "
+        f"{overall_metrics['f1']:.4f}"
+    )
     print("\nWindow confusion matrix [relax, clench]:")
-    print(matrix)
+    print(np.asarray(overall_metrics["confusion_matrix"]))
+    print("\nTransition-band breakdown:")
+    for name, group_metrics in subset_metrics.items():
+        if group_metrics is None:
+            print(f"{name}: no windows")
+            continue
+        balanced_text = (
+            f"{group_metrics['balanced_accuracy']:.4f}"
+            if group_metrics["balanced_accuracy"] is not None
+            else "n/a (only one true class present)"
+        )
+        print(
+            f"{name}: windows={group_metrics['windows']}, "
+            f"accuracy={group_metrics['accuracy']:.4f}, "
+            f"balanced_accuracy={balanced_text}, "
+            f"f1={group_metrics['f1']:.4f}"
+        )
     print("\nValidation classification report:")
     print(classification_report(
         validation_y,
@@ -147,10 +226,11 @@ def main() -> int:
             "train_sessions": artifact["train_sessions"],
             "validation_windows": validation_windows,
             "validation_sessions": validation_sessions,
-            "accuracy": float(accuracy),
-            "balanced_accuracy": float(balanced),
-            "f1": float(f1),
-            "confusion_matrix": matrix.tolist(),
+            "accuracy": overall_metrics["accuracy"],
+            "balanced_accuracy": overall_metrics["balanced_accuracy"],
+            "f1": overall_metrics["f1"],
+            "confusion_matrix": overall_metrics["confusion_matrix"],
+            "transition_band_breakdown": subset_metrics,
         }
         args.metrics_output.parent.mkdir(parents=True, exist_ok=True)
         args.metrics_output.write_text(

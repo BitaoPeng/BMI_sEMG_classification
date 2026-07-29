@@ -529,7 +529,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # GUI虚拟按钮标签：松开为0=Relax，按住为1=Clench。
         # 该标签在GUI线程收到一批串口样本时写入CSV，因此并非严格硬件同步；
-        # 后续离线特征提取会丢弃每次标签边沿前后50 ms的窗口。
+        # 后续离线特征提取会保留所有完整窗口，并记录按钮边沿附近的过渡窗。
         self.button_label: int = 0
 
         # 默认保存到项目根目录data_with_button；停止后由用户输入session编号。

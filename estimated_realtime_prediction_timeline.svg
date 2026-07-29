@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="820" viewBox="0 0 1600 820">
+<defs>
+<marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#B66A00"/></marker>
+<marker id="arrow-red" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#C83E4D"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#f5f7fa"/>
+<g font-family="Arial, Helvetica, sans-serif">
+<text x="800.0" y="48.0" text-anchor="middle" font-size="30" font-weight="700" fill="#172033">Estimated Real-time Prediction Example — TD5-D1</text>
+<text x="800.0" y="82.0" text-anchor="middle" font-size="17" font-weight="600" fill="#a23b3b">Illustrative placeholders only — replace with continuous on-device test data</text>
+<rect x="130" y="170" width="1405" height="515" rx="14" fill="#ffffff" stroke="#d9dee7" stroke-width="1.5"/>
+<rect x="190.0" y="205" width="330.0" height="445" fill="#CFEBDD" fill-opacity="0.62"/>
+<rect x="548.6" y="205" width="213.4" height="445" fill="#CFEBDD" fill-opacity="0.62"/>
+<rect x="779.6" y="205" width="235.4" height="445" fill="#CFEBDD" fill-opacity="0.62"/>
+<rect x="1039.2" y="205" width="184.8" height="445" fill="#CFEBDD" fill-opacity="0.62"/>
+<rect x="1239.4" y="205" width="270.6" height="445" fill="#CFEBDD" fill-opacity="0.62"/>
+<rect x="190" y="230" width="1320" height="150" fill="#f8fafc" fill-opacity="0.70"/>
+<rect x="190" y="440" width="1320" height="150" fill="#f8fafc" fill-opacity="0.70"/>
+<line x1="190" y1="270" x2="1510" y2="270" stroke="#cfd6df" stroke-width="1" stroke-dasharray="4 6"/>
+<line x1="190" y1="355" x2="1510" y2="355" stroke="#cfd6df" stroke-width="1" stroke-dasharray="4 6"/>
+<line x1="190" y1="480" x2="1510" y2="480" stroke="#cfd6df" stroke-width="1" stroke-dasharray="4 6"/>
+<line x1="190" y1="565" x2="1510" y2="565" stroke="#cfd6df" stroke-width="1" stroke-dasharray="4 6"/>
+<line x1="190.0" y1="205" x2="190.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="190.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">0</text>
+<line x1="300.0" y1="205" x2="300.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="300.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">1</text>
+<line x1="410.0" y1="205" x2="410.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="410.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">2</text>
+<line x1="520.0" y1="205" x2="520.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="520.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">3</text>
+<line x1="630.0" y1="205" x2="630.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="630.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">4</text>
+<line x1="740.0" y1="205" x2="740.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="740.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">5</text>
+<line x1="850.0" y1="205" x2="850.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="850.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">6</text>
+<line x1="960.0" y1="205" x2="960.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="960.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">7</text>
+<line x1="1070.0" y1="205" x2="1070.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="1070.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">8</text>
+<line x1="1180.0" y1="205" x2="1180.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="1180.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">9</text>
+<line x1="1290.0" y1="205" x2="1290.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="1290.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">10</text>
+<line x1="1400.0" y1="205" x2="1400.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="1400.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">11</text>
+<line x1="1510.0" y1="205" x2="1510.0" y2="650" stroke="#e4e8ee" stroke-width="1"/>
+<text x="1510.0" y="677.0" text-anchor="middle" font-size="14" fill="#4b5563">12</text>
+<line x1="190" y1="650" x2="1510" y2="650" stroke="#252a32" stroke-width="1.8"/>
+<text x="850.0" y="715.0" text-anchor="middle" font-size="17" font-weight="600">Time (s)</text>
+<text x="165.0" y="305.0" text-anchor="end" font-size="17" font-weight="700" fill="#252a32">Ground-truth</text>
+<text x="165.0" y="515.0" text-anchor="end" font-size="17" font-weight="700" fill="#2878B5">STM32 prediction</text>
+<text x="187.0" y="275.0" text-anchor="end" font-size="13" fill="#56606e">Clench (1)</text>
+<text x="187.0" y="360.0" text-anchor="end" font-size="13" fill="#56606e">Relax (0)</text>
+<text x="187.0" y="485.0" text-anchor="end" font-size="13" fill="#56606e">Clench (1)</text>
+<text x="187.0" y="570.0" text-anchor="end" font-size="13" fill="#56606e">Relax (0)</text>
+<path d="M 190.0 355.0 H 520.0 V 270.0 H 1015.0 V 355.0 H 1510.0" fill="none" stroke="#20242b" stroke-width="5" stroke-linejoin="round"/>
+<path d="M 190.0 565.0 H 548.6 V 480.0 H 762.0 V 565.0 H 779.6 V 480.0 H 1039.2 V 565.0 H 1224.0 V 480.0 H 1239.4 V 565.0 H 1510.0" fill="none" stroke="#2878B5" stroke-width="5" stroke-linejoin="round"/>
+<line x1="520.0" y1="205" x2="520.0" y2="650" stroke="#5B6574" stroke-width="2" stroke-dasharray="7 6"/>
+<text x="420.0" y="192.0" font-size="15" font-weight="700" fill="#394150">Relax → Clench</text>
+<line x1="1015.0" y1="205" x2="1015.0" y2="650" stroke="#5B6574" stroke-width="2" stroke-dasharray="7 6"/>
+<text x="915.0" y="192.0" font-size="15" font-weight="700" fill="#394150">Clench → Relax</text>
+<line x1="523.0" y1="420" x2="544.6" y2="420" stroke="#B66A00" stroke-width="3" marker-end="url(#arrow-amber)"/>
+<text x="534.3" y="408.0" text-anchor="middle" font-size="14" font-weight="700" fill="#9A5A00">Response latency ≈ 260 ms</text>
+<line x1="1018.0" y1="420" x2="1035.2" y2="420" stroke="#B66A00" stroke-width="3" marker-end="url(#arrow-amber)"/>
+<text x="1027.1" y="408.0" text-anchor="middle" font-size="14" font-weight="700" fill="#9A5A00">Response latency ≈ 220 ms</text>
+<ellipse cx="770.8" cy="565" rx="13" ry="14" fill="none" stroke="#C83E4D" stroke-width="3"/>
+<line x1="734.8" y1="631.0" x2="765.8" y2="577.0" stroke="#C83E4D" stroke-width="2.5" marker-end="url(#arrow-red)"/>
+<text x="698.8" y="639.0" font-size="14" font-weight="700" fill="#B83242">False switch ≈ 160 ms</text>
+<ellipse cx="1231.7" cy="480" rx="13" ry="14" fill="none" stroke="#C83E4D" stroke-width="3"/>
+<line x1="1195.7" y1="433.0" x2="1226.7" y2="468.0" stroke="#C83E4D" stroke-width="2.5" marker-end="url(#arrow-red)"/>
+<text x="1159.7" y="425.0" font-size="14" font-weight="700" fill="#B83242">False switch ≈ 140 ms</text>
+<rect x="260" y="744" width="28" height="18" fill="#CFEBDD" fill-opacity="0.9"/>
+<text x="298.0" y="758.0" font-size="15" fill="#252a32">Correct stable prediction</text>
+<line x1="530" y1="753" x2="575" y2="753" stroke="#20242b" stroke-width="5"/>
+<text x="587.0" y="758.0" font-size="15" fill="#252a32">Ground truth</text>
+<line x1="735" y1="753" x2="780" y2="753" stroke="#2878B5" stroke-width="5"/>
+<text x="792.0" y="758.0" font-size="15" fill="#252a32">STM32 prediction</text>
+<line x1="1010" y1="753" x2="1055" y2="753" stroke="#B66A00" stroke-width="3"/>
+<text x="1067.0" y="758.0" font-size="15" fill="#252a32">Response latency</text>
+<circle cx="1265" cy="753" r="8" fill="none" stroke="#C83E4D" stroke-width="3"/>
+<text x="1280.0" y="758.0" font-size="15" fill="#252a32">False switch</text>
+</g></svg>

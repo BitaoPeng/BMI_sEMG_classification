@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""自动运行稳定状态窗口的特征提取与独立验证 SVM 实验。
+"""自动运行全窗口特征提取与独立验证 SVM 实验。
 
 一条命令运行完整流程：
     python run_svm_experiments.py
@@ -12,7 +12,7 @@
     reference win:  128 source samples
     effective FFT:  128/D points
     overlap:        50%（hop = 64/D）
-    edge guard:     button 上升沿/下降沿前后各 50 ms
+    transition band: button 上升沿/下降沿前后各 50 ms，仅审计、不丢窗
 
 因此默认运行2个D乘4种特征组合，共8组实验。D改变时，名义窗口时长仍为
 256 ms，更新周期仍为128 ms，FFT频率分辨率仍为3.90625 Hz；滤波群延迟
@@ -83,7 +83,22 @@ def parse_args() -> argparse.Namespace:
         help="Reference window length at the source sampling rate.",
     )
     parser.add_argument("--overlap", type=float, default=0.5)
-    parser.add_argument("--edge-guard-ms", type=float, default=50.0)
+    parser.add_argument(
+        "--transition-band-ms",
+        "--edge-guard-ms",
+        dest="transition_band_ms",
+        type=float,
+        default=50.0,
+    )
+    parser.add_argument(
+        "--clench-fraction-threshold",
+        type=float,
+        default=0.5,
+        help=(
+            "Window label is 1 only when its fraction of source-sample "
+            "Clench labels is strictly greater than this value."
+        ),
+    )
     parser.add_argument("--low-hz", type=float, default=20.0)
     parser.add_argument("--high-hz", type=float, default=100.0)
     parser.add_argument("--filter-order", type=int, default=4)
@@ -115,8 +130,12 @@ def parse_args() -> argparse.Namespace:
         parser.error("--window-samples must be at least 2.")
     if not 0.0 <= args.overlap < 1.0:
         parser.error("--overlap must satisfy 0 <= overlap < 1.")
-    if args.edge_guard_ms < 0:
-        parser.error("--edge-guard-ms cannot be negative.")
+    if args.transition_band_ms < 0:
+        parser.error("--transition-band-ms cannot be negative.")
+    if not 0.0 <= args.clench_fraction_threshold < 1.0:
+        parser.error(
+            "--clench-fraction-threshold must satisfy 0 <= threshold < 1."
+        )
     reference_hop = round(args.window_samples * (1.0 - args.overlap))
     if reference_hop < 1:
         parser.error("Window/overlap produces an invalid reference hop.")
@@ -190,7 +209,8 @@ def experiment_name(
     requested_high_hz: float,
     effective_high_hz: float,
     filter_order: int,
-    edge_guard_ms: float,
+    transition_band_ms: float,
+    clench_fraction_threshold: float,
     aa_passband_ripple_db: float,
     aa_stopband_attenuation_db: float,
     c_value: float,
@@ -204,7 +224,8 @@ def experiment_name(
     parameter_text = (
         f"bpf{low_hz:g}-{requested_high_hz:g}to"
         f"{effective_high_hz:g}_o{filter_order}_"
-        f"g{edge_guard_ms:g}_"
+        f"band{transition_band_ms:g}_"
+        f"lt{clench_fraction_threshold:g}_"
         f"aa{aa_passband_ripple_db:g}-{aa_stopband_attenuation_db:g}_"
         f"c{c_value:g}"
     ).replace(".", "p")
@@ -229,13 +250,17 @@ def write_summary(rows: list[dict], path: Path) -> None:
         "reference_window_samples", "window_samples", "fft_points",
         "source_hop_samples", "hop_samples",
         "window_duration_ms", "update_period_ms",
-        "overlap", "edge_guard_ms",
+        "overlap", "transition_band_ms", "clench_fraction_threshold",
         "low_hz", "high_hz", "effective_high_hz", "filter_order",
         "aa_passband_ripple_db", "aa_stopband_attenuation_db",
         "features", "feature_count",
         "train_windows", "train_sessions",
         "validation_windows", "validation_sessions",
         "accuracy", "balanced_accuracy", "f1",
+        "outside_band_windows", "outside_band_accuracy",
+        "outside_band_balanced_accuracy",
+        "transition_band_windows", "transition_band_accuracy",
+        "transition_band_balanced_accuracy",
         "tn", "fp", "fn", "tp", "elapsed_seconds", "error",
     ]
     with path.open("w", newline="", encoding="utf-8-sig") as handle:
@@ -322,7 +347,8 @@ def main() -> int:
             args.high_hz,
             effective_high_hz,
             args.filter_order,
-            args.edge_guard_ms,
+            args.transition_band_ms,
+            args.clench_fraction_threshold,
             args.aa_passband_ripple_db,
             args.aa_stopband_attenuation_db,
             args.c,
@@ -338,7 +364,8 @@ def main() -> int:
             f"fs{effective_fs_text}_"
             f"win{args.window_samples}to{effective_window_samples}_"
             f"hop{args.reference_hop_samples}to{effective_hop_samples}_"
-            f"ov{overlap_percent}_guard{args.edge_guard_ms:g}_"
+            f"ov{overlap_percent}_band{args.transition_band_ms:g}_"
+            f"labelthr{args.clench_fraction_threshold:g}_"
             f"bpf{args.low_hz:g}-{args.high_hz:g}to"
             f"{effective_high_hz:g}_o{args.filter_order}_"
             f"aa{args.aa_passband_ripple_db:g}-"
@@ -364,7 +391,9 @@ def main() -> int:
             "--downsample-factor", str(downsample_factor),
             "--window-samples", str(args.window_samples),
             "--overlap", str(args.overlap),
-            "--edge-guard-ms", str(args.edge_guard_ms),
+            "--transition-band-ms", str(args.transition_band_ms),
+            "--clench-fraction-threshold",
+            str(args.clench_fraction_threshold),
             "--low-hz", str(args.low_hz),
             "--high-hz", str(args.high_hz),
             "--fft-low-hz", str(args.low_hz),
@@ -383,7 +412,9 @@ def main() -> int:
             "--downsample-factor", str(downsample_factor),
             "--window-samples", str(args.window_samples),
             "--overlap", str(args.overlap),
-            "--edge-guard-ms", str(args.edge_guard_ms),
+            "--transition-band-ms", str(args.transition_band_ms),
+            "--clench-fraction-threshold",
+            str(args.clench_fraction_threshold),
             "--low-hz", str(args.low_hz),
             "--high-hz", str(args.high_hz),
             "--fft-low-hz", str(args.low_hz),
@@ -422,7 +453,8 @@ def main() -> int:
             "window_duration_ms": window_duration_ms,
             "update_period_ms": update_period_ms,
             "overlap": args.overlap,
-            "edge_guard_ms": args.edge_guard_ms,
+            "transition_band_ms": args.transition_band_ms,
+            "clench_fraction_threshold": args.clench_fraction_threshold,
             "low_hz": args.low_hz,
             "high_hz": args.high_hz,
             "effective_high_hz": effective_high_hz,
@@ -453,6 +485,9 @@ def main() -> int:
             )
             metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
             matrix = metrics["confusion_matrix"]
+            band_breakdown = metrics["transition_band_breakdown"]
+            outside_band = band_breakdown["outside_transition_band"]
+            inside_band = band_breakdown["intersects_transition_band"]
             rows.append({
                 "status": "ok",
                 **common_result_fields,
@@ -463,6 +498,28 @@ def main() -> int:
                 "accuracy": metrics["accuracy"],
                 "balanced_accuracy": metrics["balanced_accuracy"],
                 "f1": metrics["f1"],
+                "outside_band_windows": (
+                    outside_band["windows"] if outside_band else 0
+                ),
+                "outside_band_accuracy": (
+                    outside_band["accuracy"] if outside_band else None
+                ),
+                "outside_band_balanced_accuracy": (
+                    outside_band["balanced_accuracy"]
+                    if outside_band
+                    else None
+                ),
+                "transition_band_windows": (
+                    inside_band["windows"] if inside_band else 0
+                ),
+                "transition_band_accuracy": (
+                    inside_band["accuracy"] if inside_band else None
+                ),
+                "transition_band_balanced_accuracy": (
+                    inside_band["balanced_accuracy"]
+                    if inside_band
+                    else None
+                ),
                 "tn": matrix[0][0],
                 "fp": matrix[0][1],
                 "fn": matrix[1][0],

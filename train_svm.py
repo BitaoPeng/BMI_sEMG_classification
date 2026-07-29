@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""使用独立训练目录生成的稳定状态窗口训练 Linear SVM。
+"""使用独立训练目录生成的全部完整窗口训练 Linear SVM。
 
 运行示例：
     python train_svm.py --input train_features.csv
@@ -30,7 +30,7 @@ KNOWN_FEATURES = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train a relax/clench Linear SVM on stable-state windows."
+        description="Train a relax/clench Linear SVM on all complete windows."
     )
     parser.add_argument(
         "--input", type=Path, required=True, help="Training feature CSV."

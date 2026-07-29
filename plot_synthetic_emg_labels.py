@@ -20,7 +20,8 @@
 * 下图蓝线是用于训练的 ``button_label``；
 * 如果CSV包含 ``sim_true_label``，橙色虚线表示模拟隐藏真值；
 * 红色区域表示按钮标签与隐藏真值不一致；
-* 灰色区域表示按钮上升/下降沿前后各 ``--guard-ms`` 的丢弃范围。
+* 灰色区域表示按钮上升/下降沿前后各 ``--transition-band-ms`` 的审计范围；
+  这些窗口仍会保留。
 """
 
 from __future__ import annotations
@@ -106,7 +107,9 @@ def parse_args() -> argparse.Namespace:
         help="Time span to plot. Default: from start-s to end of CSV.",
     )
     parser.add_argument(
+        "--transition-band-ms",
         "--guard-ms",
+        dest="transition_band_ms",
         type=float,
         default=50.0,
         help="Shade this interval on both sides of every button edge.",
@@ -130,8 +133,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--start-s cannot be negative.")
     if args.duration_s is not None and args.duration_s <= 0.0:
         parser.error("--duration-s must be positive.")
-    if args.guard_ms < 0.0:
-        parser.error("--guard-ms cannot be negative.")
+    if args.transition_band_ms < 0.0:
+        parser.error("--transition-band-ms cannot be negative.")
     if args.width_px < 800:
         parser.error("--width-px must be at least 800.")
     if args.input_dir is not None:
@@ -164,8 +167,8 @@ def plot_directory(args: argparse.Namespace) -> int:
             str(args.sampling_rate),
             "--start-s",
             str(args.start_s),
-            "--guard-ms",
-            str(args.guard_ms),
+            "--transition-band-ms",
+            str(args.transition_band_ms),
             "--width-px",
             str(args.width_px),
         ]
@@ -426,19 +429,19 @@ def main() -> int:
             label_plot.addItem(mismatch_region)
 
     edge_times = button_edges(time_s, label)
-    guard_s = args.guard_ms / 1000.0
+    transition_band_s = args.transition_band_ms / 1000.0
     for edge_time in edge_times:
-        guard_region = pg.LinearRegionItem(
+        transition_band_region = pg.LinearRegionItem(
             values=(
-                max(shown_start_s, float(edge_time) - guard_s),
-                min(shown_end_s, float(edge_time) + guard_s),
+                max(shown_start_s, float(edge_time) - transition_band_s),
+                min(shown_end_s, float(edge_time) + transition_band_s),
             ),
             orientation="vertical",
             movable=False,
             brush=pg.mkBrush(127, 140, 141, 42),
             pen=pg.mkPen(None),
         )
-        label_plot.addItem(guard_region)
+        label_plot.addItem(transition_band_region)
         wave_plot.addItem(
             pg.InfiniteLine(
                 pos=float(edge_time),
@@ -462,7 +465,8 @@ def main() -> int:
             "<span style='color:#1769AA'>blue: button label</span>; "
             "<span style='color:#E67E22'>orange: hidden truth</span>; "
             "<span style='color:#E74C3C'>red: mismatch</span>; "
-            f"gray: +/-{args.guard_ms:g} ms guard</div>"
+            "gray: +/-"
+            f"{args.transition_band_ms:g} ms transition band</div>"
         )
     )
     wave_plot.setXRange(shown_start_s, shown_end_s, padding=0)

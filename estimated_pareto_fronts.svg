@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="760" viewBox="0 0 1600 760">
+<rect width="100%" height="100%" fill="#f5f7fa"/>
+<g font-family="Arial, Helvetica, sans-serif">
+<text x="800.0" y="48.0" text-anchor="middle" font-size="30" font-weight="700" fill="#172033">Estimated Pareto Fronts: Accuracy–Cost Trade-off</text>
+<rect x="60" y="135" width="720" height="510" rx="12" fill="#ffffff" stroke="#d9dee7"/>
+<text x="420.0" y="164.0" text-anchor="middle" font-size="21" font-weight="700">(a) Accuracy vs. Processing Time</text>
+<line x1="127" y1="540.3" x2="735" y2="540.3" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="113.0" y="545.3" text-anchor="end" font-size="14" fill="#4b5563">78%</text>
+<line x1="127" y1="484.5" x2="735" y2="484.5" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="113.0" y="489.5" text-anchor="end" font-size="14" fill="#4b5563">80%</text>
+<line x1="127" y1="428.8" x2="735" y2="428.8" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="113.0" y="433.8" text-anchor="end" font-size="14" fill="#4b5563">82%</text>
+<line x1="127" y1="373.1" x2="735" y2="373.1" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="113.0" y="378.1" text-anchor="end" font-size="14" fill="#4b5563">84%</text>
+<line x1="127" y1="317.3" x2="735" y2="317.3" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="113.0" y="322.3" text-anchor="end" font-size="14" fill="#4b5563">86%</text>
+<line x1="127" y1="261.6" x2="735" y2="261.6" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="113.0" y="266.6" text-anchor="end" font-size="14" fill="#4b5563">88%</text>
+<line x1="127" y1="205.9" x2="735" y2="205.9" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="113.0" y="210.9" text-anchor="end" font-size="14" fill="#4b5563">90%</text>
+<line x1="127.0" y1="178" x2="127.0" y2="596" stroke="#eef1f5"/>
+<text x="127.0" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">0.2</text>
+<line x1="220.5" y1="178" x2="220.5" y2="596" stroke="#eef1f5"/>
+<text x="220.5" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">0.4</text>
+<line x1="314.1" y1="178" x2="314.1" y2="596" stroke="#eef1f5"/>
+<text x="314.1" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">0.6</text>
+<line x1="407.6" y1="178" x2="407.6" y2="596" stroke="#eef1f5"/>
+<text x="407.6" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">0.8</text>
+<line x1="501.2" y1="178" x2="501.2" y2="596" stroke="#eef1f5"/>
+<text x="501.2" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">1</text>
+<line x1="594.7" y1="178" x2="594.7" y2="596" stroke="#eef1f5"/>
+<text x="594.7" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">1.2</text>
+<line x1="688.2" y1="178" x2="688.2" y2="596" stroke="#eef1f5"/>
+<text x="688.2" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">1.4</text>
+<line x1="127" y1="596" x2="735" y2="596" stroke="#252a32" stroke-width="1.8"/>
+<line x1="127" y1="178" x2="127" y2="596" stroke="#252a32" stroke-width="1.8"/>
+<text x="431.0" y="658.0" text-anchor="middle" font-size="16" font-weight="600">Total Processing Time (ms) — lower is better</text>
+<text x="62" y="387.0" text-anchor="middle" font-size="16" font-weight="600" transform="rotate(-90 62 387.0)">Classification Accuracy (%)</text>
+<text x="139.0" y="202.0" font-size="15" font-weight="700" fill="#374151">Better ↖</text>
+<polyline points="183.1,359.1 258.0,275.5 688.2,219.8" fill="none" stroke="#20242b" stroke-width="2.5" stroke-dasharray="8 6"/>
+<circle cx="183.1" cy="359.1" r="8.5" fill="#2878B5" fill-opacity="1" stroke="#111827" stroke-width="2"/>
+<text x="193.1" y="347.1" font-size="14" font-weight="600" fill="#252a32">TD3-D1</text>
+<circle cx="258.0" cy="275.5" r="8.5" fill="#2A9D8F" fill-opacity="1" stroke="#111827" stroke-width="2"/>
+<text x="268.0" y="263.5" font-size="14" font-weight="600" fill="#252a32">TD5-D1</text>
+<circle cx="562.0" cy="442.7" r="7" fill="#E9A23B" fill-opacity="0.68" stroke="#ffffff" stroke-width="2"/>
+<text x="572.0" y="430.7" font-size="14" font-weight="600" fill="#252a32">FD4-D1</text>
+<circle cx="688.2" cy="219.8" r="8.5" fill="#D1495B" fill-opacity="1" stroke="#111827" stroke-width="2"/>
+<text x="594.2" y="207.8" font-size="14" font-weight="600" fill="#252a32">TFD9-D1</text>
+<polygon points="220.5,406.9 213.5,421.9 227.5,421.9" fill="#2878B5" fill-opacity="0.68" stroke="#ffffff" stroke-width="2"/>
+<text x="230.5" y="437.9" font-size="14" font-weight="600" fill="#252a32">TD3-D2</text>
+<polygon points="281.3,323.3 274.3,338.3 288.3,338.3" fill="#2A9D8F" fill-opacity="0.68" stroke="#ffffff" stroke-width="2"/>
+<text x="291.3" y="354.3" font-size="14" font-weight="600" fill="#252a32">TD5-D2</text>
+<polygon points="445.0,518.3 438.0,533.3 452.0,533.3" fill="#E9A23B" fill-opacity="0.68" stroke="#ffffff" stroke-width="2"/>
+<text x="455.0" y="549.3" font-size="14" font-weight="600" fill="#252a32">FD4-D2</text>
+<polygon points="547.9,267.5 540.9,282.5 554.9,282.5" fill="#D1495B" fill-opacity="0.68" stroke="#ffffff" stroke-width="2"/>
+<text x="557.9" y="298.5" font-size="14" font-weight="600" fill="#252a32">TFD9-D2</text>
+<rect x="840" y="135" width="720" height="510" rx="12" fill="#ffffff" stroke="#d9dee7"/>
+<text x="1200.0" y="164.0" text-anchor="middle" font-size="21" font-weight="700">(b) Accuracy vs. Peak RAM</text>
+<line x1="907" y1="540.3" x2="1515" y2="540.3" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="893.0" y="545.3" text-anchor="end" font-size="14" fill="#4b5563">78%</text>
+<line x1="907" y1="484.5" x2="1515" y2="484.5" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="893.0" y="489.5" text-anchor="end" font-size="14" fill="#4b5563">80%</text>
+<line x1="907" y1="428.8" x2="1515" y2="428.8" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="893.0" y="433.8" text-anchor="end" font-size="14" fill="#4b5563">82%</text>
+<line x1="907" y1="373.1" x2="1515" y2="373.1" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="893.0" y="378.1" text-anchor="end" font-size="14" fill="#4b5563">84%</text>
+<line x1="907" y1="317.3" x2="1515" y2="317.3" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="893.0" y="322.3" text-anchor="end" font-size="14" fill="#4b5563">86%</text>
+<line x1="907" y1="261.6" x2="1515" y2="261.6" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="893.0" y="266.6" text-anchor="end" font-size="14" fill="#4b5563">88%</text>
+<line x1="907" y1="205.9" x2="1515" y2="205.9" stroke="#d7dde6" stroke-dasharray="3 5"/>
+<text x="893.0" y="210.9" text-anchor="end" font-size="14" fill="#4b5563">90%</text>
+<line x1="950.4" y1="178" x2="950.4" y2="596" stroke="#eef1f5"/>
+<text x="950.4" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">0.8</text>
+<line x1="1037.3" y1="178" x2="1037.3" y2="596" stroke="#eef1f5"/>
+<text x="1037.3" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">1.2</text>
+<line x1="1124.1" y1="178" x2="1124.1" y2="596" stroke="#eef1f5"/>
+<text x="1124.1" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">1.6</text>
+<line x1="1211.0" y1="178" x2="1211.0" y2="596" stroke="#eef1f5"/>
+<text x="1211.0" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">2</text>
+<line x1="1297.9" y1="178" x2="1297.9" y2="596" stroke="#eef1f5"/>
+<text x="1297.9" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">2.4</text>
+<line x1="1384.7" y1="178" x2="1384.7" y2="596" stroke="#eef1f5"/>
+<text x="1384.7" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">2.8</text>
+<line x1="1471.6" y1="178" x2="1471.6" y2="596" stroke="#eef1f5"/>
+<text x="1471.6" y="621.0" text-anchor="middle" font-size="14" fill="#4b5563">3.2</text>
+<line x1="907" y1="596" x2="1515" y2="596" stroke="#252a32" stroke-width="1.8"/>
+<line x1="907" y1="178" x2="907" y2="596" stroke="#252a32" stroke-width="1.8"/>
+<text x="1211.0" y="658.0" text-anchor="middle" font-size="16" font-weight="600">Incremental Peak RAM Usage (KB) — lower is better</text>
+<text x="842" y="387.0" text-anchor="middle" font-size="16" font-weight="600" transform="rotate(-90 842 387.0)">Classification Accuracy (%)</text>
+<text x="919.0" y="202.0" font-size="15" font-weight="700" fill="#374151">Better ↖</text>
+<polyline points="972.1,414.9 993.9,331.3 1059.0,275.5 1471.6,219.8" fill="none" stroke="#20242b" stroke-width="2.5" stroke-dasharray="8 6"/>
+<circle cx="1037.3" cy="359.1" r="7" fill="#2878B5" fill-opacity="0.68" stroke="#ffffff" stroke-width="2"/>
+<text x="1047.3" y="347.1" font-size="14" font-weight="600" fill="#252a32">TD3-D1</text>
+<circle cx="1059.0" cy="275.5" r="8.5" fill="#2A9D8F" fill-opacity="1" stroke="#111827" stroke-width="2"/>
+<text x="1069.0" y="263.5" font-size="14" font-weight="600" fill="#252a32">TD5-D1</text>
+<circle cx="1428.1" cy="442.7" r="7" fill="#E9A23B" fill-opacity="0.68" stroke="#ffffff" stroke-width="2"/>
+<text x="1438.1" y="430.7" font-size="14" font-weight="600" fill="#252a32">FD4-D1</text>
+<circle cx="1471.6" cy="219.8" r="8.5" fill="#D1495B" fill-opacity="1" stroke="#111827" stroke-width="2"/>
+<text x="1377.6" y="207.8" font-size="14" font-weight="600" fill="#252a32">TFD9-D1</text>
+<polygon points="972.1,405.4 963.6,423.4 980.6,423.4" fill="#2878B5" fill-opacity="1" stroke="#111827" stroke-width="2"/>
+<text x="982.1" y="437.9" font-size="14" font-weight="600" fill="#252a32">TD3-D2</text>
+<polygon points="993.9,321.8 985.4,339.8 1002.4,339.8" fill="#2A9D8F" fill-opacity="1" stroke="#111827" stroke-width="2"/>
+<text x="1003.9" y="354.3" font-size="14" font-weight="600" fill="#252a32">TD5-D2</text>
+<polygon points="1211.0,518.3 1204.0,533.3 1218.0,533.3" fill="#E9A23B" fill-opacity="0.68" stroke="#ffffff" stroke-width="2"/>
+<text x="1221.0" y="549.3" font-size="14" font-weight="600" fill="#252a32">FD4-D2</text>
+<polygon points="1254.4,267.5 1247.4,282.5 1261.4,282.5" fill="#D1495B" fill-opacity="0.68" stroke="#ffffff" stroke-width="2"/>
+<text x="1264.4" y="298.5" font-size="14" font-weight="600" fill="#252a32">TFD9-D2</text>
+<circle cx="340" cy="700" r="7" fill="#2878B5"/>
+<text x="353.0" y="705.0" font-size="15" fill="#252a32">TD3</text>
+<circle cx="440" cy="700" r="7" fill="#2A9D8F"/>
+<text x="453.0" y="705.0" font-size="15" fill="#252a32">TD5</text>
+<circle cx="540" cy="700" r="7" fill="#E9A23B"/>
+<text x="553.0" y="705.0" font-size="15" fill="#252a32">FD4</text>
+<circle cx="640" cy="700" r="7" fill="#D1495B"/>
+<text x="653.0" y="705.0" font-size="15" fill="#252a32">TFD9</text>
+<circle cx="750" cy="700" r="7" fill="#6b7280"/>
+<text x="764.0" y="705.0" font-size="15" fill="#252a32">D=1</text>
+<polygon points="834,692 826,707 842,707" fill="#6b7280"/>
+<text x="848.0" y="705.0" font-size="15" fill="#252a32">D=2</text>
+<line x1="910" y1="700" x2="955" y2="700" stroke="#20242b" stroke-width="2.5" stroke-dasharray="8 6"/>
+<text x="965.0" y="705.0" font-size="15" fill="#252a32">Pareto front</text>
+</g></svg>

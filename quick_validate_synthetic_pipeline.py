@@ -9,7 +9,7 @@
 3. 让 GUI ``button_label`` 的每个按下/松开边沿相对真值随机提前或滞后；
 4. 默认混合 100/200/500/2000 ms 的握拳动作，并随机改变动作顺序和间隔；
 5. 调用现有 ``run_svm_experiments.py``，分别快速测试 D=1 和 D=2；
-6. 自动检查 ±50 ms guard、窗口映射、NFFT、BPF、FFT、SVM 参数导出。
+6. 自动检查 transition band、全窗口标注、NFFT、BPF、FFT、SVM 参数导出。
 
 合成数据只用于验证代码（software regression test），不能代替真实受试者数据，
 也不能把合成数据准确率写成最终实验性能。
@@ -98,7 +98,18 @@ def parse_args() -> argparse.Namespace:
         default=100.0,
         help="Absolute clipping limit of button-edge timing error.",
     )
-    parser.add_argument("--edge-guard-ms", type=float, default=50.0)
+    parser.add_argument(
+        "--transition-band-ms",
+        "--edge-guard-ms",
+        dest="transition_band_ms",
+        type=float,
+        default=50.0,
+    )
+    parser.add_argument(
+        "--clench-fraction-threshold",
+        type=float,
+        default=0.5,
+    )
     parser.add_argument(
         "--minimum-balanced-accuracy",
         type=float,
@@ -131,8 +142,12 @@ def parse_args() -> argparse.Namespace:
         parser.error(
             "--button-jitter-max-ms must be >= --button-jitter-std-ms."
         )
-    if args.edge_guard_ms < 0.0:
-        parser.error("--edge-guard-ms cannot be negative.")
+    if args.transition_band_ms < 0.0:
+        parser.error("--transition-band-ms cannot be negative.")
+    if not 0.0 <= args.clench_fraction_threshold < 1.0:
+        parser.error(
+            "--clench-fraction-threshold must satisfy 0 <= threshold < 1."
+        )
     if not 0.0 <= args.minimum_balanced_accuracy <= 1.0:
         parser.error("--minimum-balanced-accuracy must be between 0 and 1.")
     return args
@@ -590,29 +605,35 @@ def exactly_one(paths: list[Path], description: str) -> Path:
     return paths[0]
 
 
-def make_invalid_mask(labels: np.ndarray, guard_samples: int) -> np.ndarray:
-    """复现feature extractor的按钮边沿±guard规则。"""
+def make_transition_band_mask(
+    labels: np.ndarray,
+    band_samples: int,
+) -> np.ndarray:
+    """复现 feature extractor 的按钮边沿 transition-band 标记规则。"""
     changes = np.flatnonzero(labels[1:] != labels[:-1]) + 1
-    invalid = np.zeros(labels.size, dtype=bool)
+    transition_band = np.zeros(labels.size, dtype=bool)
     for edge in changes:
-        start = max(0, int(edge) - guard_samples)
-        stop = min(labels.size, int(edge) + guard_samples + 1)
-        invalid[start:stop] = True
-    return invalid
+        start = max(0, int(edge) - band_samples)
+        stop = min(labels.size, int(edge) + band_samples + 1)
+        transition_band[start:stop] = True
+    return transition_band
 
 
 def verify_kept_windows(
     feature_csv: Path,
     source_dir: Path,
-    guard_samples: int,
+    transition_band_samples: int,
+    clench_fraction_threshold: float,
 ) -> dict[str, int | float]:
-    """确认保留窗口没有穿过按钮边沿guard，并统计隐藏真值污染。"""
+    """确认完整候选窗口全部保留且窗口投票标签和审计列正确。"""
     features = pd.read_csv(feature_csv)
     numeric_features = features[ALL_FEATURES].to_numpy(dtype=np.float64)
     if not np.isfinite(numeric_features).all():
         raise AssertionError(f"{feature_csv}: features contain NaN/Inf.")
 
     contaminated_windows = 0
+    transition_band_windows = 0
+    mixed_label_windows = 0
     checked_windows = 0
     for source_name, rows in features.groupby("source_file", sort=False):
         source = pd.read_csv(
@@ -621,26 +642,72 @@ def verify_kept_windows(
         )
         button = source["button_label"].to_numpy(dtype=np.uint8)
         true_label = source["sim_true_label"].to_numpy(dtype=np.uint8)
-        invalid = make_invalid_mask(button, guard_samples)
+        transition_band = make_transition_band_mask(
+            button, transition_band_samples
+        )
+        expected_window_count = max(
+            0,
+            1 + (button.size - REFERENCE_WINDOW_SAMPLES)
+            // REFERENCE_HOP_SAMPLES,
+        )
+        if len(rows) != expected_window_count:
+            raise AssertionError(
+                f"{feature_csv}: {source_name} kept {len(rows)} of "
+                f"{expected_window_count} complete candidate windows."
+            )
+        expected_indices = np.arange(expected_window_count)
+        if not np.array_equal(
+            rows["window_index"].to_numpy(dtype=np.int64),
+            expected_indices,
+        ):
+            raise AssertionError(
+                f"{feature_csv}: {source_name} has missing/reordered windows."
+            )
 
         for row in rows.itertuples(index=False):
             start = int(row.start_sample)
             stop = int(row.end_sample_exclusive)
             label_id = int(row.label_id)
-            if np.any(invalid[start:stop]):
+            window_button = button[start:stop]
+            clench_sample_count = int(np.count_nonzero(window_button))
+            clench_fraction = clench_sample_count / window_button.size
+            expected_label = int(
+                clench_fraction > clench_fraction_threshold
+            )
+            contains_transition = bool(
+                np.any(window_button[1:] != window_button[:-1])
+            )
+            intersects_band = bool(np.any(transition_band[start:stop]))
+            if label_id != expected_label:
                 raise AssertionError(
-                    f"{feature_csv}: kept window intersects edge guard."
+                    f"{feature_csv}: window vote label is incorrect."
                 )
-            if not np.all(button[start:stop] == label_id):
+            if int(row.clench_sample_count) != clench_sample_count:
                 raise AssertionError(
-                    f"{feature_csv}: kept window has mixed button labels."
+                    f"{feature_csv}: clench_sample_count is incorrect."
                 )
+            if not np.isclose(float(row.clench_fraction), clench_fraction):
+                raise AssertionError(
+                    f"{feature_csv}: clench_fraction is incorrect."
+                )
+            if bool(row.contains_label_transition) != contains_transition:
+                raise AssertionError(
+                    f"{feature_csv}: transition audit flag is incorrect."
+                )
+            if bool(row.intersects_transition_band) != intersects_band:
+                raise AssertionError(
+                    f"{feature_csv}: transition-band flag is incorrect."
+                )
+            mixed_label_windows += int(contains_transition)
+            transition_band_windows += int(intersects_band)
             if not np.all(true_label[start:stop] == label_id):
                 contaminated_windows += 1
             checked_windows += 1
 
     return {
         "checked_windows": checked_windows,
+        "mixed_label_windows": mixed_label_windows,
+        "transition_band_windows": transition_band_windows,
         "windows_with_any_hidden_true_label_disagreement": (
             contaminated_windows
         ),
@@ -683,7 +750,8 @@ def inspect_experiment(
     train_dir: Path,
     validation_dir: Path,
     downsample_factor: int,
-    guard_ms: float,
+    transition_band_ms: float,
+    clench_fraction_threshold: float,
     minimum_balanced_accuracy: float,
 ) -> dict[str, Any]:
     """检查一个D对应的特征、模型、验证指标和硬件导出参数。"""
@@ -703,7 +771,9 @@ def inspect_experiment(
     expected_window = REFERENCE_WINDOW_SAMPLES // downsample_factor
     expected_hop = REFERENCE_HOP_SAMPLES // downsample_factor
     expected_high = min(REQUESTED_BPF_HIGH_HZ, 0.45 * effective_fs)
-    guard_samples = int(round(guard_ms * SOURCE_FS / 1000.0))
+    transition_band_samples = int(
+        round(transition_band_ms * SOURCE_FS / 1000.0)
+    )
 
     assert metadata["downsampling"]["factor_D"] == downsample_factor
     assert metadata["input"]["effective_sampling_rate_hz"] == effective_fs
@@ -718,8 +788,16 @@ def inspect_experiment(
     assert metadata["bpf"]["effective_high_cutoff_hz"] == expected_high
     assert metadata["fft"]["effective_band_hz"][1] == expected_high
     assert (
-        metadata["labeling"]["transition_guard_source_samples_each_side"]
-        == guard_samples
+        metadata["labeling"]["transition_band_source_samples_each_side"]
+        == transition_band_samples
+    )
+    assert (
+        metadata["labeling"]["clench_fraction_threshold"]
+        == clench_fraction_threshold
+    )
+    assert (
+        metadata["labeling"]["all_complete_candidate_windows_are_kept"]
+        is True
     )
 
     if downsample_factor > 1:
@@ -749,10 +827,16 @@ def inspect_experiment(
         assert metadata["anti_alias_filter"]["enabled"] is False
 
     train_window_check = verify_kept_windows(
-        train_feature_csv, train_dir, guard_samples
+        train_feature_csv,
+        train_dir,
+        transition_band_samples,
+        clench_fraction_threshold,
     )
     validation_window_check = verify_kept_windows(
-        validation_feature_csv, validation_dir, guard_samples
+        validation_feature_csv,
+        validation_dir,
+        transition_band_samples,
+        clench_fraction_threshold,
     )
 
     summary_path = experiment_dir / "experiment_summary.csv"
@@ -851,8 +935,10 @@ def main() -> int:
                 str(experiment_dir),
                 "--downsample-factors",
                 str(downsample_factor),
-                "--edge-guard-ms",
-                str(args.edge_guard_ms),
+                "--transition-band-ms",
+                str(args.transition_band_ms),
+                "--clench-fraction-threshold",
+                str(args.clench_fraction_threshold),
                 "--quick",
             ],
             run_dir / "logs" / f"runner_d{downsample_factor}.log",
@@ -864,19 +950,20 @@ def main() -> int:
             train_dir=train_dir,
             validation_dir=validation_dir,
             downsample_factor=downsample_factor,
-            guard_ms=args.edge_guard_ms,
+            transition_band_ms=args.transition_band_ms,
+            clench_fraction_threshold=args.clench_fraction_threshold,
             minimum_balanced_accuracy=args.minimum_balanced_accuracy,
         )
         for downsample_factor in (1, 2)
     }
 
-    # D只改变采样点数，不改变窗口对应的原始时间区间，因此窗口筛选数量应相同。
+    # D 只改变采样点数，不改变窗口对应的原始时间区间，因此候选窗数量应相同。
     for split_key in ("train_window_check", "validation_window_check"):
         d1_count = checks["1"][split_key]["checked_windows"]
         d2_count = checks["2"][split_key]["checked_windows"]
         if d1_count != d2_count:
             raise AssertionError(
-                f"D=1/D=2 kept-window count differs for {split_key}: "
+                f"D=1/D=2 complete-window count differs for {split_key}: "
                 f"{d1_count} vs {d2_count}."
             )
 
@@ -893,7 +980,8 @@ def main() -> int:
             "validation_sessions": args.validation_sessions,
             "duration_s_each": args.duration_s,
             "clench_durations_ms": args.clench_durations_ms,
-            "edge_guard_ms": args.edge_guard_ms,
+            "transition_band_ms": args.transition_band_ms,
+            "clench_fraction_threshold": args.clench_fraction_threshold,
             "button_jitter_std_ms": args.button_jitter_std_ms,
             "button_jitter_max_ms": args.button_jitter_max_ms,
             "edge_offset_summary_ms": offsets,

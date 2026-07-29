@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""从连续 sEMG Session CSV 中提取稳定状态窗口特征。
+"""从连续 sEMG Session CSV 中提取窗口特征。
 
 输入目录中的每个 ``*.csv`` 都代表一段连续采集 Session，并且必须包含：
 
@@ -7,25 +7,34 @@
 * ``button_label``：PC GUI 虚拟按钮状态，0=Relax，1=Clench。
 
 本脚本不再根据文件名推断标签。它先对整段 Session 连续执行可部署到
-STM32 的因果 Butterworth 带通滤波，再按固定长度滑动窗口。按钮上升沿和
-下降沿前后的保护区，以及包含混合按钮标签的窗口，都会被丢弃。
+STM32 的因果 Butterworth 带通滤波，再按固定长度滑动窗口。每个完整候选
+窗口都会保留；逐采样按钮真值通过窗内 Clench 占比聚合为一个窗口标签。
+按钮边沿附近的 transition band 只作为审计信息记录，不用于丢弃窗口。
 
 默认设置：
 
+* input directory = ``data_with_button``；
+* output directory = ``feature_extraction_output``；
+* 默认每个输入 Session 独立输出为 ``feature_<session>.csv/.bin/.json``；
 * source sampling rate = 500 Hz，digital downsampling factor D = 1；
 * D > 1 时使用因果 Chebyshev-I anti-alias LPF（1 dB / 40 dB）；
 * causal total-4th-order Butterworth BPF：f_low = 20 Hz，
   effective_f_high = min(requested_f_high, 0.45 * effective_fs)；
-* transition guard = 每个按钮边沿前后各 50 ms；
+* signal-processing order = causal BPF →（D > 1 时）causal anti-alias LPF
+  → D-to-1 decimation；
+* transition band = 每个按钮边沿前后各 50 ms，仅标记、不丢窗；
 * reference window = 128 source samples，overlap = 50%；
 * 降采样后 window/FFT points = 128/D，hop = 64/D，因此窗口时长和
   更新周期不变（不代表滤波群延迟或实际处理时间完全相同）；
-* 每个有效窗口独立生成一个标签，不进行多数投票；
+* 每个窗口独立标注：Clench 占比 > 0.5 时 label=1，否则 label=0；
+  对 128 个 source samples，这等价于至少 65 个 Clench samples；
 * 同时支持时域特征和基于 Hann + RFFT 的频域特征。
 
 运行示例：
 
-    python emg_feature_extractor.py --input-dir data_collection/state_sessions
+    python emg_feature_extractor.py
+    python emg_feature_extractor.py --input-dir data_collection/state_sessions \
+        --output combined_features.csv
     python emg_feature_extractor.py --downsample-factor 2
     python emg_feature_extractor.py --features mav rms wl
     python emg_feature_extractor.py --features mnf mdf pkf bandpower
@@ -137,8 +146,8 @@ def causal_bandpass(signal: np.ndarray, sos: np.ndarray) -> np.ndarray:
     """对一整段连续 Session 执行一次因果 SOS/Biquad 滤波。
 
     滤波器状态只在 Session 开始时清零，随后跨越所有滑动窗口持续保留。
-    这与 STM32 对连续采样流（D>1时为抽取后的流）逐点执行 Biquad 的方式
-    一致。禁止逐窗口重置状态，也不使用需要未来数据的 ``filtfilt``。
+    这与 STM32 对原始采样流逐点执行 Biquad 的方式一致。禁止逐窗口重置
+    状态，也不使用需要未来数据的 ``filtfilt``。
     """
     x = np.asarray(signal, dtype=np.float64)
     if x.size < 2:
@@ -150,15 +159,15 @@ def causal_bandpass(signal: np.ndarray, sos: np.ndarray) -> np.ndarray:
     return sosfilt(sos, x)
 
 
-def make_transition_invalid_mask(
+def make_transition_band_mask(
     labels: np.ndarray,
-    guard_samples: int,
+    band_samples: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """根据按钮上升/下降沿生成过渡保护区 invalid mask。
+    """根据按钮上升/下降沿生成仅用于审计的 transition-band mask。
 
     边沿索引 ``i`` 表示 ``label[i-1] != label[i]``，即新按钮状态从采样点
-    ``i`` 开始。默认 500 Hz、50 ms 时，guard=25 samples；索引距离边沿
-    不超过25个采样点的位置都会标记为无效。
+    ``i`` 开始。默认 500 Hz、50 ms 时，band=25 samples；索引距离边沿
+    不超过25个采样点的位置都会标记为 transition band。
     """
     labels = np.asarray(labels, dtype=np.uint8)
     changes = np.flatnonzero(labels[1:] != labels[:-1]) + 1
@@ -169,15 +178,15 @@ def make_transition_invalid_mask(
         (labels[changes - 1] == 1) & (labels[changes] == 0)
     ]
 
-    invalid = np.zeros(labels.size, dtype=bool)
-    if guard_samples > 0:
+    transition_band = np.zeros(labels.size, dtype=bool)
+    if band_samples > 0:
         for edge in changes:
-            # stop 为开区间，因此 +1 后会包含 edge+guard_samples。
-            start = max(0, int(edge) - guard_samples)
-            stop = min(labels.size, int(edge) + guard_samples + 1)
-            invalid[start:stop] = True
+            # stop 为开区间，因此 +1 后会包含 edge+band_samples。
+            start = max(0, int(edge) - band_samples)
+            stop = min(labels.size, int(edge) + band_samples + 1)
+            transition_band[start:stop] = True
 
-    return invalid, rising_edges, falling_edges
+    return transition_band, rising_edges, falling_edges
 
 
 def threshold_crossings(values: np.ndarray, threshold: float) -> int:
@@ -272,7 +281,7 @@ def extract_features(
     fft_low_hz: float,
     fft_high_hz: float,
 ) -> dict[str, float]:
-    """从一个稳定状态窗口提取用户指定的时域/频域特征。"""
+    """从一个完整窗口提取用户指定的时域/频域特征。"""
     x = np.asarray(window, dtype=np.float64)
     if x.size < 2:
         raise ValueError("A feature window must contain at least two samples.")
@@ -380,34 +389,41 @@ def process_session(
     anti_alias_sos: np.ndarray,
     bpf_sos: np.ndarray,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """连续滤波一个Session，再生成所有有效稳定状态窗口。"""
+    """连续滤波一个 Session，再生成并标注所有完整候选窗口。"""
     raw, button_labels = read_session_csv(
         path, args.channel, args.label_column
     )
-    # D>1时必须先在原始采样率下执行有明确阻带指标的anti-alias低通，
-    # 再每D点保留1点；禁止先抽取再滤波，否则高频成分会不可逆地折叠。
-    if anti_alias_sos.size:
-        anti_aliased_source = sosfilt(anti_alias_sos, raw)
+    # BPF始终作为第一阶段，在原始采样率下对整段连续信号运行。
+    bandpassed_source = causal_bandpass(raw, bpf_sos)
+
+    # 仅D>1时，在BPF之后执行有明确阻带指标的anti-alias低通，再每D点
+    # 保留1点。D=1时跳过anti-alias和decimation，直接使用BPF输出。
+    if args.downsample_factor > 1:
+        if not anti_alias_sos.size:
+            raise ValueError(
+                "D>1 requires a non-empty anti-alias filter."
+            )
+        anti_aliased_source = sosfilt(
+            anti_alias_sos, bandpassed_source
+        )
     else:
-        anti_aliased_source = raw
+        anti_aliased_source = bandpassed_source
     usable_source_samples = (raw.size // args.downsample_factor) * (
         args.downsample_factor
     )
-    downsampled = anti_aliased_source[
+    filtered = anti_aliased_source[
         :usable_source_samples:args.downsample_factor
     ]
-    # BPF在有效采样率下连续运行一次，滤波器状态跨越全部滑动窗口。
-    filtered = causal_bandpass(downsampled, bpf_sos)
 
-    invalid_mask, rising_edges, falling_edges = (
-        make_transition_invalid_mask(
-            button_labels, args.guard_samples
+    transition_band_mask, rising_edges, falling_edges = (
+        make_transition_band_mask(
+            button_labels, args.transition_band_samples
         )
     )
 
     rows: list[dict[str, Any]] = []
-    discarded_guard = 0
-    discarded_mixed = 0
+    transition_band_windows = 0
+    mixed_label_windows = 0
     candidate_count = 0
 
     for candidate_index, start in enumerate(
@@ -418,18 +434,22 @@ def process_session(
         source_start = start * args.downsample_factor
         source_end = end * args.downsample_factor
 
-        # 标签和±50 ms保护区始终在原始采样轴上检查。这样D改变以后仍然严格使用
-        # 相同的真实时间范围，而不是受到降采样后边沿量化误差的影响。
-        if np.any(invalid_mask[source_start:source_end]):
-            discarded_guard += 1
-            continue
-
+        # 窗口真值和 transition band 始终在原始采样轴上计算。这样 D 改变后
+        # 仍使用相同的真实时间范围和同样多的 source labels。
         window_labels = button_labels[source_start:source_end]
-        label_id = int(window_labels[0])
-        # 即使guard设为0，也只接受整窗全部为同一个按钮状态的稳定窗口。
-        if not np.all(window_labels == label_id):
-            discarded_mixed += 1
-            continue
+        clench_sample_count = int(np.count_nonzero(window_labels))
+        clench_fraction = clench_sample_count / int(window_labels.size)
+        label_id = int(
+            clench_fraction > args.clench_fraction_threshold
+        )
+        contains_label_transition = bool(
+            np.any(window_labels[1:] != window_labels[:-1])
+        )
+        intersects_transition_band = bool(
+            np.any(transition_band_mask[source_start:source_end])
+        )
+        mixed_label_windows += int(contains_label_transition)
+        transition_band_windows += int(intersects_transition_band)
 
         features = extract_features(
             filtered[start:end],
@@ -453,6 +473,10 @@ def process_session(
                 "end_time_s": source_end / args.source_fs,
                 "label": LABEL_TO_NAME[label_id],
                 "label_id": label_id,
+                "clench_sample_count": clench_sample_count,
+                "clench_fraction": clench_fraction,
+                "contains_label_transition": contains_label_transition,
+                "intersects_transition_band": intersects_transition_band,
                 **features,
             }
         )
@@ -467,8 +491,9 @@ def process_session(
         "falling_edges": int(falling_edges.size),
         "candidate_windows": candidate_count,
         "valid_windows": len(rows),
-        "discarded_guard": discarded_guard,
-        "discarded_mixed_label": discarded_mixed,
+        "transition_band_windows": transition_band_windows,
+        "mixed_label_windows": mixed_label_windows,
+        "discarded_windows": 0,
     }
     return rows, stats
 
@@ -548,6 +573,7 @@ def save_outputs(
 
     anti_alias_cmsis_df2t = sos_to_cmsis_df2t(anti_alias_sos)
     bpf_cmsis_df2t = sos_to_cmsis_df2t(bpf_sos)
+    anti_alias_enabled = args.downsample_factor > 1
 
     counts = result.groupby("label_id").size().to_dict()
     metadata: dict[str, Any] = {
@@ -568,23 +594,16 @@ def save_outputs(
         "label_dtype": "uint8",
         "label_shape": [int(labels.shape[0])],
         "label_mapping": {"0": "relax", "1": "clench"},
-        "classification": {
-            "level": "stable_state_sliding_window",
-            "one_prediction_per_valid_window": True,
-            "majority_vote": False,
+        "window_output": {
+            "level": "binary_state_sliding_window",
+            "one_feature_vector_per_complete_candidate_window": True,
         },
-        "hardware_timing_contract": {
+        "hardware_preprocessing_timing": {
             "preprocessing_total_us": (
-                "causal anti-alias LPF for new source-rate samples when D>1, "
-                "D-to-1 decimation, causal BPF for new effective-rate "
-                "samples, plus all selected time/frequency feature "
-                "extraction including Hann and FFT"
-            ),
-            "svm_inference_us": (
-                "feature scaling/merged linear-SVM score and binary decision"
-            ),
-            "total_pipeline_us": (
-                "preprocessing_total_us + svm_inference_us"
+                "causal BPF for new source-rate samples; when D>1, causal "
+                "anti-alias LPF followed by D-to-1 decimation; plus all "
+                "selected time/frequency feature extraction including "
+                "Hann and FFT"
             ),
             "excluded": (
                 "ADC/window acquisition wait, UART, GUI and display refresh"
@@ -601,7 +620,8 @@ def save_outputs(
         "downsampling": {
             "factor_D": args.downsample_factor,
             "order": (
-                "causal anti-alias LPF, keep every D-th sample, causal BPF"
+                "causal BPF; when D>1, causal anti-alias LPF followed by "
+                "keeping every D-th sample"
             ),
             "source_sampling_rate_hz": args.source_fs,
             "effective_sampling_rate_hz": args.fs,
@@ -613,26 +633,29 @@ def save_outputs(
             ),
         },
         "anti_alias_filter": {
-            "enabled": bool(anti_alias_sos.size),
+            "enabled": anti_alias_enabled,
             "type": (
-                "Chebyshev type I low-pass" if anti_alias_sos.size else None
+                "Chebyshev type I low-pass" if anti_alias_enabled else None
             ),
             "causal": True,
+            "input": (
+                "causal BPF output" if anti_alias_enabled else None
+            ),
             "source_sampling_rate_hz": args.source_fs,
             "passband_edge_hz": (
-                args.effective_high_hz if anti_alias_sos.size else None
+                args.effective_high_hz if anti_alias_enabled else None
             ),
             "stopband_edge_hz": (
-                args.fs / 2.0 if anti_alias_sos.size else None
+                args.fs / 2.0 if anti_alias_enabled else None
             ),
             "maximum_passband_ripple_db": (
                 args.aa_passband_ripple_db
-                if anti_alias_sos.size
+                if anti_alias_enabled
                 else None
             ),
             "minimum_stopband_attenuation_db": (
                 args.aa_stopband_attenuation_db
-                if anti_alias_sos.size
+                if anti_alias_enabled
                 else None
             ),
             "digital_filter_order": args.aa_filter_order,
@@ -665,33 +688,55 @@ def save_outputs(
             ),
         },
         "labeling": {
-            "stable_window_rule": (
-                "all button_label samples in a kept window must be identical"
+            "window_label_rule": (
+                "label_id=1 iff count(button_label==1)/window_source_samples "
+                "> clench_fraction_threshold; otherwise label_id=0"
             ),
-            "transition_guard_ms_each_side": args.guard_ms,
-            "transition_guard_source_samples_each_side": args.guard_samples,
-            "guard_and_label_checks_use_source_sample_axis": True,
+            "clench_fraction_threshold": args.clench_fraction_threshold,
+            "comparison_is_strictly_greater": True,
+            "minimum_clench_source_samples_for_reference_window": (
+                int(
+                    np.floor(
+                        args.clench_fraction_threshold
+                        * args.reference_window_samples
+                    )
+                )
+                + 1
+            ),
+            "all_complete_candidate_windows_are_kept": True,
+            "transition_band_ms_each_side": args.transition_band_ms,
+            "transition_band_source_samples_each_side": (
+                args.transition_band_samples
+            ),
+            "transition_band_and_label_checks_use_source_sample_axis": True,
             "edge_definition": (
                 "edge i means button_label[i-1] != button_label[i]"
             ),
-            "invalid_interval_definition": (
-                "for guard_samples > 0, sample indices from "
-                "edge-guard_samples through edge+guard_samples inclusive"
+            "transition_band_definition": (
+                "for band_samples > 0, sample indices from "
+                "edge-band_samples through edge+band_samples inclusive"
             ),
-            "discard_if_window_intersects_invalid_mask": True,
+            "discard_if_window_intersects_transition_band": False,
+            "audit_columns": [
+                "clench_sample_count",
+                "clench_fraction",
+                "contains_label_transition",
+                "intersects_transition_band",
+            ],
         },
         "bpf": {
             "type": "Butterworth band-pass",
             "causal": True,
             "zero_phase": False,
-            "sampling_rate_hz": args.fs,
+            "position": "first stage before optional anti-alias filtering",
+            "sampling_rate_hz": args.source_fs,
             "low_cutoff_hz": args.low_hz,
             "requested_high_cutoff_hz": args.requested_high_hz,
             "effective_high_cutoff_hz": args.effective_high_hz,
             "high_cutoff_hz": args.effective_high_hz,
             "effective_high_rule": (
                 "min(requested_high_cutoff_hz, "
-                "0.45 * effective_sampling_rate_hz)"
+                "0.45 * post_decimation_sampling_rate_hz)"
             ),
             "total_digital_filter_order": args.filter_order,
             "scipy_bandpass_prototype_order": args.filter_order // 2,
@@ -705,7 +750,10 @@ def save_outputs(
         },
         "fft": {
             "fft_length": args.window_samples,
-            "input": "decimated causal-BPF output; no rectification",
+            "input": (
+                "causal-BPF output after optional anti-alias filtering and "
+                "decimation; no rectification"
+            ),
             "window": (
                 "symmetric Hann: 0.5-0.5*cos(2*pi*n/(N-1))"
             ),
@@ -744,14 +792,17 @@ def save_outputs(
                 sum(item["candidate_windows"] for item in session_stats)
             ),
             "valid_windows": int(len(result)),
-            "discarded_guard": int(
-                sum(item["discarded_guard"] for item in session_stats)
+            "discarded_windows": int(
+                sum(item["discarded_windows"] for item in session_stats)
             ),
-            "discarded_mixed_label": int(
+            "transition_band_windows": int(
                 sum(
-                    item["discarded_mixed_label"]
+                    item["transition_band_windows"]
                     for item in session_stats
                 )
+            ),
+            "mixed_label_windows": int(
+                sum(item["mixed_label_windows"] for item in session_stats)
             ),
             "relax_windows": int(counts.get(0, 0)),
             "clench_windows": int(counts.get(1, 0)),
@@ -769,20 +820,32 @@ def parse_args() -> argparse.Namespace:
     """定义并检查全部可调预处理、窗口和特征参数。"""
     parser = argparse.ArgumentParser(
         description=(
-            "Extract stable Relax/Clench window features from continuous "
-            "CSV sessions with sample-level PC-GUI button labels."
+            "Extract and label every complete Relax/Clench window from "
+            "continuous CSV sessions with sample-level PC-GUI button labels."
         )
     )
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=Path("data_collection/state_sessions"),
+        default=Path("data_with_button"),
         help="Directory containing continuous-session *.csv files.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("emg_state_features.csv"),
+        help=(
+            "Optional combined CSV output. When omitted, each input session "
+            "is written separately below --output-dir."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("feature_extraction_output"),
+        help=(
+            "Directory for per-session feature_<session> outputs when "
+            "--output is omitted."
+        ),
     )
     parser.add_argument(
         "--binary-output",
@@ -794,7 +857,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--channel", default="Channel1_raw")
     parser.add_argument("--label-column", default="button_label")
 
-    # --sampling-rate表示原始ADC采样率；BPF后再按整数D执行抽取。
+    # --sampling-rate表示原始ADC采样率；先执行BPF，D>1时再抗混叠并抽取。
     parser.add_argument(
         "--sampling-rate", "--fs",
         dest="source_fs",
@@ -834,12 +897,27 @@ def parse_args() -> argparse.Namespace:
         help="Total digital BPF order; must be even.",
     )
 
-    # PC GUI按钮每个上升/下降沿前后各丢弃50 ms。
+    # PC GUI 按钮每个上升/下降沿前后各标记一段 transition band。
+    # 保留旧参数名 --edge-guard-ms/--guard-ms，兼容现有实验命令。
     parser.add_argument(
-        "--edge-guard-ms", "--guard-ms",
-        dest="guard_ms",
+        "--transition-band-ms", "--edge-guard-ms", "--guard-ms",
+        dest="transition_band_ms",
         type=float,
         default=50.0,
+        help=(
+            "Audit-only transition band on each side of a button edge; "
+            "windows intersecting it are still kept."
+        ),
+    )
+    parser.add_argument(
+        "--clench-fraction-threshold",
+        type=float,
+        default=0.5,
+        help=(
+            "Assign label 1 only when the fraction of source-sample "
+            "button labels equal to 1 is strictly greater than this value. "
+            "Default 0.5 means at least 65 of 128 source samples."
+        ),
     )
 
     # 这里始终输入原始采样率下的参考点数。实际窗口/FFT点数会自动除以D。
@@ -870,6 +948,10 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
 
+    if args.output is None and args.binary_output is not None:
+        parser.error(
+            "--binary-output requires combined mode with an explicit --output."
+        )
     if args.source_fs <= 0.0:
         parser.error("--sampling-rate/--fs must be positive.")
     if args.downsample_factor < 1:
@@ -878,8 +960,12 @@ def parse_args() -> argparse.Namespace:
         parser.error("--window-samples must be >= 2.")
     if not 0.0 <= args.overlap < 1.0:
         parser.error("--overlap must satisfy 0 <= overlap < 1.")
-    if args.guard_ms < 0.0:
-        parser.error("--guard-ms cannot be negative.")
+    if args.transition_band_ms < 0.0:
+        parser.error("--transition-band-ms cannot be negative.")
+    if not 0.0 <= args.clench_fraction_threshold < 1.0:
+        parser.error(
+            "--clench-fraction-threshold must satisfy 0 <= threshold < 1."
+        )
     if args.threshold < 0.0:
         parser.error("--threshold cannot be negative.")
     if args.aa_passband_ripple_db <= 0.0:
@@ -944,9 +1030,9 @@ def parse_args() -> argparse.Namespace:
             "so update period remains exactly unchanged."
         )
 
-    # ±50 ms标签保护区在原始采样轴计算，因此不会随D产生额外量化误差。
-    args.guard_samples = int(
-        round(args.guard_ms * args.source_fs / 1000.0)
+    # Transition band 在原始采样轴计算，因此不会随 D 产生额外量化误差。
+    args.transition_band_samples = int(
+        round(args.transition_band_ms * args.source_fs / 1000.0)
     )
     args.source_hop_samples = reference_hop_samples
     args.fs = effective_fs
@@ -964,16 +1050,23 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    """查找Session CSV、连续处理、切窗并保存四种输出。"""
+    """查找 Session CSV，逐 Session 或合并处理并保存四种输出。"""
     args = parse_args()
     if not args.input_dir.is_dir():
         raise NotADirectoryError(f"Input directory not found: {args.input_dir}")
+    if (
+        args.output is None
+        and args.output_dir.resolve() == args.input_dir.resolve()
+    ):
+        raise ValueError(
+            "--output-dir must differ from --input-dir in per-session mode."
+        )
 
-    output_resolved = args.output.resolve()
+    output_resolved = args.output.resolve() if args.output is not None else None
     paths = sorted(
         path
         for path in args.input_dir.glob("*.csv")
-        if path.resolve() != output_resolved
+        if output_resolved is None or path.resolve() != output_resolved
     )
     if not paths:
         raise FileNotFoundError(f"No *.csv files found in {args.input_dir}")
@@ -988,7 +1081,7 @@ def main() -> int:
     args.aa_filter_order = aa_filter_order
     args.aa_critical_hz = aa_critical_hz
     bpf_sos = design_bandpass(
-        fs=args.fs,
+        fs=args.source_fs,
         low_hz=args.low_hz,
         high_hz=args.effective_high_hz,
         total_order=args.filter_order,
@@ -996,6 +1089,7 @@ def main() -> int:
 
     all_rows: list[dict[str, Any]] = []
     all_stats: list[dict[str, Any]] = []
+    per_session_outputs: list[tuple[Path, Path, Path, Path]] = []
     for path in paths:
         rows, stats = process_session(
             path, args, anti_alias_sos, bpf_sos
@@ -1005,20 +1099,42 @@ def main() -> int:
         print(
             f"{path.name}: candidates={stats['candidate_windows']}, "
             f"kept={stats['valid_windows']}, "
-            f"guard-discarded={stats['discarded_guard']}, "
-            f"mixed-discarded={stats['discarded_mixed_label']}"
+            f"transition-band={stats['transition_band_windows']}, "
+            f"mixed-label={stats['mixed_label_windows']}, discarded=0"
         )
+        if not rows:
+            raise ValueError(
+                f"{path}: no complete windows were generated. Check session "
+                "length, window-samples, downsample-factor and overlap."
+            )
+        if args.output is None:
+            session_args = argparse.Namespace(**vars(args))
+            session_args.output = (
+                args.output_dir / f"feature_{path.stem}.csv"
+            )
+            session_args.binary_output = None
+            outputs = save_outputs(
+                pd.DataFrame(rows),
+                [stats],
+                anti_alias_sos,
+                bpf_sos,
+                session_args,
+            )
+            per_session_outputs.append(outputs)
+            print(f"Saved session outputs: {outputs[0].resolve()}")
 
     if not all_rows:
         raise ValueError(
-            "No valid stable-state windows remain. Check button_label, "
-            "session length, guard-ms, window-samples and overlap."
+            "No complete windows were generated. Check session length, "
+            "window-samples, downsample-factor and overlap."
         )
 
     result = pd.DataFrame(all_rows)
-    csv_path, feature_path, label_path, metadata_path = save_outputs(
-        result, all_stats, anti_alias_sos, bpf_sos, args
-    )
+    combined_outputs: tuple[Path, Path, Path, Path] | None = None
+    if args.output is not None:
+        combined_outputs = save_outputs(
+            result, all_stats, anti_alias_sos, bpf_sos, args
+        )
 
     class_counts = result.groupby("label").size().to_dict()
     candidate_total = sum(
@@ -1026,7 +1142,7 @@ def main() -> int:
     )
     print(
         f"Processed {len(paths)} sessions: "
-        f"{len(result)}/{candidate_total} valid windows"
+        f"{len(result)}/{candidate_total} complete windows kept"
     )
     print(f"Class counts: {class_counts}")
     print(
@@ -1036,31 +1152,60 @@ def main() -> int:
         f"->{args.window_samples} samples, "
         f"hop={args.source_hop_samples}->{args.hop_samples} samples"
     )
-    if anti_alias_sos.size:
+    print(
+        f"BPF first: source fs={args.source_fs:g} Hz, "
+        f"total order={args.filter_order}, low={args.low_hz:g} Hz, "
+        f"requested high={args.requested_high_hz:g} Hz, "
+        f"effective high={args.effective_high_hz:g} Hz"
+    )
+    if args.downsample_factor > 1:
         print(
-            f"Anti-alias LPF: Chebyshev-I order={args.aa_filter_order}, "
+            f"Then anti-alias LPF: Chebyshev-I "
+            f"order={args.aa_filter_order}, "
             f"passband<={args.effective_high_hz:g} Hz/"
             f"{args.aa_passband_ripple_db:g} dB, "
             f"stopband>={args.fs / 2.0:g} Hz/"
             f"{args.aa_stopband_attenuation_db:g} dB"
         )
+        print(
+            "Then decimation: keep one of every "
+            f"{args.downsample_factor} samples"
+        )
     else:
-        print("Anti-alias LPF: disabled (D=1, no decimation)")
-    print(
-        f"BPF: total order={args.filter_order}, low={args.low_hz:g} Hz, "
-        f"requested high={args.requested_high_hz:g} Hz, "
-        f"effective high={args.effective_high_hz:g} Hz"
-    )
+        print("D=1: anti-alias LPF and decimation are disabled")
     print(
         f"Timing: window={1000.0 * args.window_samples / args.fs:g} ms, "
         f"update={1000.0 * args.hop_samples / args.fs:g} ms, "
-        f"guard_each_side={args.guard_samples} source samples"
+        "transition_band_each_side="
+        f"{args.transition_band_samples} source samples"
+    )
+    minimum_clench_samples = (
+        int(
+            np.floor(
+                args.clench_fraction_threshold
+                * args.reference_window_samples
+            )
+        )
+        + 1
+    )
+    print(
+        "Window label: clench_fraction>"
+        f"{args.clench_fraction_threshold:g}; for "
+        f"{args.reference_window_samples} source samples, label 1 requires "
+        f">={minimum_clench_samples} clench samples"
     )
     print(f"Features: {args.features}")
-    print(f"Saved CSV: {csv_path.resolve()}")
-    print(f"Saved feature binary: {feature_path.resolve()}")
-    print(f"Saved label binary: {label_path.resolve()}")
-    print(f"Saved metadata: {metadata_path.resolve()}")
+    if combined_outputs is not None:
+        csv_path, feature_path, label_path, metadata_path = combined_outputs
+        print(f"Saved combined CSV: {csv_path.resolve()}")
+        print(f"Saved feature binary: {feature_path.resolve()}")
+        print(f"Saved label binary: {label_path.resolve()}")
+        print(f"Saved metadata: {metadata_path.resolve()}")
+    else:
+        print(
+            f"Saved {len(per_session_outputs)} per-session output groups "
+            f"below: {args.output_dir.resolve()}"
+        )
     return 0
 
 
