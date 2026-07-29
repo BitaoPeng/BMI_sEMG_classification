@@ -23,7 +23,7 @@ from sklearn.svm import LinearSVC
 
 
 KNOWN_FEATURES = (
-    "mav", "rms", "wl", "var", "zc", "ssc", "wamp",
+    "mav", "rms", "wl", "zc", "ssc",
     "mnf", "mdf", "pkf", "bandpower",
 )
 

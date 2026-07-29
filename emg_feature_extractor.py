@@ -15,8 +15,9 @@ STM32 的因果 Butterworth 带通滤波，再按固定长度滑动窗口。每�
 
 * input directory = ``data_with_button``；
 * output directory = ``feature_extraction_output``；
-* 默认每个输入 Session 独立输出为 ``feature_<session>.csv/.bin/.json``；
-* source sampling rate = 500 Hz，digital downsampling factor D = 1；
+* 默认每个输入 Session 分别生成 ``feature_<session>_d1`` 和
+  ``feature_<session>_d2`` 两组输出；
+* source sampling rate = 500 Hz，digital downsampling factor D = 1、2；
 * D > 1 时使用因果 Chebyshev-I anti-alias LPF（1 dB / 40 dB）；
 * causal total-4th-order Butterworth BPF：f_low = 20 Hz，
   effective_f_high = min(requested_f_high, 0.45 * effective_fs)；
@@ -28,7 +29,8 @@ STM32 的因果 Butterworth 带通滤波，再按固定长度滑动窗口。每�
   更新周期不变（不代表滤波群延迟或实际处理时间完全相同）；
 * 每个窗口独立标注：Clench 占比 > 0.5 时 label=1，否则 label=0；
   对 128 个 source samples，这等价于至少 65 个 Clench samples；
-* 同时支持时域特征和基于 Hann + RFFT 的频域特征。
+* 使用原定 9 个特征：MAV、RMS、WL、ZC、SSC、MNF、MDF、PKF、
+  Bandpower。
 
 运行示例：
 
@@ -55,7 +57,7 @@ from scipy.signal import butter, cheb1ord, cheby1, sosfilt
 # 数字标签会直接写入 label bin，后续训练和 STM32 验证都使用相同映射。
 LABEL_TO_NAME = {0: "relax", 1: "clench"}
 
-TIME_FEATURES = ("mav", "rms", "wl", "var", "zc", "ssc", "wamp")
+TIME_FEATURES = ("mav", "rms", "wl", "zc", "ssc")
 FREQUENCY_FEATURES = ("mnf", "mdf", "pkf", "bandpower")
 AVAILABLE_FEATURES = TIME_FEATURES + FREQUENCY_FEATURES
 
@@ -306,10 +308,6 @@ def extract_features(
         elif name == "wl":
             # Waveform Length：相邻采样点绝对差之和。
             result[name] = float(np.sum(np.abs(dx)))
-        elif name == "var":
-            # Population Variance：除以N，便于STM32使用固定窗口长度计算。
-            mean_value = float(np.mean(x))
-            result[name] = float(np.mean((x - mean_value) ** 2))
         elif name == "zc":
             result[name] = float(threshold_crossings(x, threshold))
         elif name == "ssc":
@@ -323,11 +321,6 @@ def extract_features(
             )
             result[name] = float(
                 np.count_nonzero(is_turning_point & exceeds_threshold)
-            )
-        elif name == "wamp":
-            # Willison Amplitude：相邻采样差大于等于阈值的次数。
-            result[name] = float(
-                np.count_nonzero(np.abs(dx) >= threshold)
             )
         elif name in FREQUENCY_FEATURES:
             assert frequency_result is not None
@@ -504,7 +497,6 @@ def feature_definitions(threshold: float) -> dict[str, str]:
         "mav": "mean(abs(x))",
         "rms": "sqrt(mean(x^2))",
         "wl": "sum(abs(x[n]-x[n-1]))",
-        "var": "mean((x-mean(x))^2), population variance (divide by N)",
         "zc": (
             "count sign changes with abs(x[n]-x[n-1]) >= "
             f"{threshold:g}"
@@ -513,7 +505,6 @@ def feature_definitions(threshold: float) -> dict[str, str]:
             "count turning points where both adjacent slope magnitudes "
             f">= {threshold:g}"
         ),
-        "wamp": f"count abs(x[n]-x[n-1]) >= {threshold:g}",
         "mnf": "sum(f[k]*PSD[k])/sum(PSD[k]) inside FFT band",
         "mdf": "first FFT-bin frequency reaching 50% cumulative band PSD",
         "pkf": "frequency of maximum PSD bin inside FFT band",
@@ -784,7 +775,7 @@ def save_outputs(
         "features": {
             "selected": args.features,
             "definitions": feature_definitions(args.threshold),
-            "zc_ssc_wamp_threshold_filtered_adc_counts": args.threshold,
+            "zc_ssc_threshold_filtered_adc_counts": args.threshold,
         },
         "counts": {
             "sessions": len(session_stats),
@@ -875,6 +866,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--downsample-factors",
+        nargs="+",
+        type=int,
+        default=[1, 2],
+        help=(
+            "D values generated in per-session mode when --output is "
+            "omitted. Default: 1 2. Combined mode continues to use the "
+            "single --downsample-factor value."
+        ),
+    )
+    parser.add_argument(
         "--aa-passband-ripple-db",
         type=float,
         default=1.0,
@@ -944,7 +946,7 @@ def parse_args() -> argparse.Namespace:
         "--threshold",
         type=float,
         default=3.0,
-        help="Filtered-ADC-count threshold used by ZC, SSC and WAMP.",
+        help="Filtered-ADC-count threshold used by ZC and SSC.",
     )
     args = parser.parse_args()
 
@@ -956,6 +958,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--sampling-rate/--fs must be positive.")
     if args.downsample_factor < 1:
         parser.error("--downsample-factor must be a positive integer.")
+    if any(factor < 1 for factor in args.downsample_factors):
+        parser.error("--downsample-factors values must all be positive.")
+    if len(set(args.downsample_factors)) != len(args.downsample_factors):
+        parser.error("--downsample-factors cannot contain duplicates.")
     if args.reference_window_samples < 2:
         parser.error("--window-samples must be >= 2.")
     if not 0.0 <= args.overlap < 1.0:
@@ -1049,28 +1055,77 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def main() -> int:
-    """查找 Session CSV，逐 Session 或合并处理并保存四种输出。"""
-    args = parse_args()
-    if not args.input_dir.is_dir():
-        raise NotADirectoryError(f"Input directory not found: {args.input_dir}")
-    if (
-        args.output is None
-        and args.output_dir.resolve() == args.input_dir.resolve()
-    ):
+def configure_downsampling(
+    base_args: argparse.Namespace,
+    downsample_factor: int,
+) -> argparse.Namespace:
+    """复制基础参数并派生一个 D 对应的采样率、窗口和频带参数。"""
+    args = argparse.Namespace(**vars(base_args))
+    args.downsample_factor = downsample_factor
+    if downsample_factor < 1:
+        raise ValueError("Downsample factor must be a positive integer.")
+
+    effective_fs = args.source_fs / downsample_factor
+    safe_high_limit_hz = 0.45 * effective_fs
+    args.requested_high_hz = args.high_hz
+    args.effective_high_hz = min(
+        args.requested_high_hz, safe_high_limit_hz
+    )
+    if not 0.0 < args.low_hz < args.effective_high_hz:
         raise ValueError(
-            "--output-dir must differ from --input-dir in per-session mode."
+            "BPF cutoffs must satisfy 0 < low-hz < "
+            "min(high-hz, 0.45 * effective sampling rate); "
+            f"D={downsample_factor} gives effective high "
+            f"{args.effective_high_hz:g} Hz."
         )
 
-    output_resolved = args.output.resolve() if args.output is not None else None
-    paths = sorted(
-        path
-        for path in args.input_dir.glob("*.csv")
-        if output_resolved is None or path.resolve() != output_resolved
+    args.requested_fft_high_hz = args.fft_high_hz
+    args.effective_fft_high_hz = min(
+        args.requested_fft_high_hz, safe_high_limit_hz
     )
-    if not paths:
-        raise FileNotFoundError(f"No *.csv files found in {args.input_dir}")
+    if not (
+        0.0 <= args.fft_low_hz < args.effective_fft_high_hz
+    ):
+        raise ValueError(
+            "FFT band must satisfy 0 <= fft-low-hz < "
+            "min(fft-high-hz, 0.45 * effective sampling rate)."
+        )
 
+    reference_hop_samples = int(
+        round(args.reference_window_samples * (1.0 - args.overlap))
+    )
+    if args.reference_window_samples % downsample_factor:
+        raise ValueError(
+            f"D={downsample_factor} must divide --window-samples exactly."
+        )
+    if reference_hop_samples % downsample_factor:
+        raise ValueError(
+            f"D={downsample_factor} must divide the reference hop exactly."
+        )
+
+    args.transition_band_samples = int(
+        round(args.transition_band_ms * args.source_fs / 1000.0)
+    )
+    args.source_hop_samples = reference_hop_samples
+    args.fs = effective_fs
+    args.window_samples = (
+        args.reference_window_samples // downsample_factor
+    )
+    args.hop_samples = (
+        args.source_hop_samples // downsample_factor
+    )
+    if args.window_samples < 2:
+        raise ValueError(
+            "Downsampling leaves fewer than two samples per feature window."
+        )
+    return args
+
+
+def run_configured_extraction(
+    args: argparse.Namespace,
+    paths: list[Path],
+) -> None:
+    """使用一个确定的 D 处理全部输入，并按所选输出模式保存。"""
     anti_alias_sos, aa_filter_order, aa_critical_hz = design_antialias(
         source_fs=args.source_fs,
         effective_fs=args.fs,
@@ -1110,7 +1165,8 @@ def main() -> int:
         if args.output is None:
             session_args = argparse.Namespace(**vars(args))
             session_args.output = (
-                args.output_dir / f"feature_{path.stem}.csv"
+                args.output_dir
+                / f"feature_{path.stem}_d{args.downsample_factor}.csv"
             )
             session_args.binary_output = None
             outputs = save_outputs(
@@ -1206,6 +1262,47 @@ def main() -> int:
             f"Saved {len(per_session_outputs)} per-session output groups "
             f"below: {args.output_dir.resolve()}"
         )
+
+
+def main() -> int:
+    """查找 Session CSV；默认逐 Session 生成 D=1、D=2 两套输出。"""
+    base_args = parse_args()
+    if not base_args.input_dir.is_dir():
+        raise NotADirectoryError(
+            f"Input directory not found: {base_args.input_dir}"
+        )
+    if (
+        base_args.output is None
+        and base_args.output_dir.resolve() == base_args.input_dir.resolve()
+    ):
+        raise ValueError(
+            "--output-dir must differ from --input-dir in per-session mode."
+        )
+
+    output_resolved = (
+        base_args.output.resolve()
+        if base_args.output is not None
+        else None
+    )
+    paths = sorted(
+        path
+        for path in base_args.input_dir.glob("*.csv")
+        if output_resolved is None or path.resolve() != output_resolved
+    )
+    if not paths:
+        raise FileNotFoundError(
+            f"No *.csv files found in {base_args.input_dir}"
+        )
+
+    factors = (
+        [base_args.downsample_factor]
+        if base_args.output is not None
+        else base_args.downsample_factors
+    )
+    for factor in factors:
+        args = configure_downsampling(base_args, factor)
+        print(f"\n=== Downsampling D={factor} ===")
+        run_configured_extraction(args, paths)
     return 0
 
 
