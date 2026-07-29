@@ -839,6 +839,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "Recompute and overwrite complete per-session output groups. "
+            "By default, existing complete groups are skipped."
+        ),
+    )
+    parser.add_argument(
         "--binary-output",
         type=Path,
         help=(
@@ -1145,7 +1153,35 @@ def run_configured_extraction(
     all_rows: list[dict[str, Any]] = []
     all_stats: list[dict[str, Any]] = []
     per_session_outputs: list[tuple[Path, Path, Path, Path]] = []
+    skipped_sessions = 0
     for path in paths:
+        if args.output is None:
+            output_csv = (
+                args.output_dir
+                / f"feature_{path.stem}_d{args.downsample_factor}.csv"
+            )
+            output_bin = output_csv.with_suffix(".bin")
+            output_label_bin = output_bin.with_name(
+                f"{output_bin.stem}_labels.bin"
+            )
+            output_json = output_bin.with_suffix(".json")
+            expected_outputs = (
+                output_csv,
+                output_bin,
+                output_label_bin,
+                output_json,
+            )
+            if (
+                not args.overwrite
+                and all(item.is_file() for item in expected_outputs)
+            ):
+                skipped_sessions += 1
+                print(
+                    f"{path.name}: skipped; complete D="
+                    f"{args.downsample_factor} output group already exists"
+                )
+                continue
+
         rows, stats = process_session(
             path, args, anti_alias_sos, bpf_sos
         )
@@ -1164,10 +1200,7 @@ def run_configured_extraction(
             )
         if args.output is None:
             session_args = argparse.Namespace(**vars(args))
-            session_args.output = (
-                args.output_dir
-                / f"feature_{path.stem}_d{args.downsample_factor}.csv"
-            )
+            session_args.output = output_csv
             session_args.binary_output = None
             outputs = save_outputs(
                 pd.DataFrame(rows),
@@ -1180,6 +1213,12 @@ def run_configured_extraction(
             print(f"Saved session outputs: {outputs[0].resolve()}")
 
     if not all_rows:
+        if args.output is None and skipped_sessions == len(paths):
+            print(
+                f"No new D={args.downsample_factor} sessions to process; "
+                f"all {skipped_sessions} complete output groups were skipped."
+            )
+            return
         raise ValueError(
             "No complete windows were generated. Check session length, "
             "window-samples, downsample-factor and overlap."
@@ -1197,7 +1236,13 @@ def run_configured_extraction(
         item["candidate_windows"] for item in all_stats
     )
     print(
-        f"Processed {len(paths)} sessions: "
+        f"Processed {len(all_stats)} sessions"
+        + (
+            f" (skipped {skipped_sessions} existing)"
+            if skipped_sessions
+            else ""
+        )
+        + ": "
         f"{len(result)}/{candidate_total} complete windows kept"
     )
     print(f"Class counts: {class_counts}")
