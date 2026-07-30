@@ -80,7 +80,7 @@ def panel(
     )
     items.append(text(x0 + 385, 164, title, text_anchor="middle", font_size="21", font_weight="700"))
 
-    for y_value in (78, 80, 82, 84, 86, 88, 90):
+    for y_value in (75, 80, 85, 90):
         y = sy(y_value)
         items.append(
             f'<line x1="{left}" y1="{y:.1f}" x2="{right}" y2="{y:.1f}" '
@@ -100,6 +100,9 @@ def panel(
         [
             f'<line x1="{left}" y1="{bottom}" x2="{right}" y2="{bottom}" stroke="#252a32" stroke-width="1.8"/>',
             f'<line x1="{left}" y1="{top}" x2="{left}" y2="{bottom}" stroke="#252a32" stroke-width="1.8"/>',
+            # Zigzag axis-break marks indicate that neither axis begins at zero.
+            f'<path d="M {left + 12} {bottom + 4} l 5 -8 l 5 8 l 5 -8" fill="none" stroke="#252a32" stroke-width="1.8"/>',
+            f'<path d="M {left - 4} {bottom - 15} l 8 -5 l -8 -5 l 8 -5" fill="none" stroke="#252a32" stroke-width="1.8"/>',
             text((left + right) / 2, bottom + 62, x_label, text_anchor="middle", font_size="16", font_weight="600"),
             (
                 f'<text x="{left - 65}" y="{(top + bottom) / 2:.1f}" '
@@ -160,12 +163,14 @@ def main() -> None:
         '<rect width="100%" height="100%" fill="#f5f7fa"/>',
         '<g font-family="Arial, Helvetica, sans-serif">',
         text(WIDTH / 2, 48, "Estimated Pareto Fronts: Accuracy–Cost Trade-off", text_anchor="middle", font_size="30", font_weight="700", fill="#172033"),
+        text(WIDTH / 2, 78, "Higher accuracy, lower processing time, and lower memory footprint are better.", text_anchor="middle", font_size="17", font_weight="600", fill="#374151"),
+        text(WIDTH / 2, 105, "Illustrative placeholders only — replace with on-device measurements", text_anchor="middle", font_size="15", font_weight="600", fill="#a23b3b"),
     ]
     svg += panel(
         35,
         "(a) Accuracy vs. Processing Time",
         "time",
-        "Total Processing Time (ms) — lower is better",
+        "Processing Time (ms)",
         0.2,
         1.5,
         [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4],
@@ -174,7 +179,7 @@ def main() -> None:
         815,
         "(b) Accuracy vs. Peak RAM",
         "ram",
-        "Incremental Peak RAM Usage (KB) — lower is better",
+        "Memory Usage (KB)",
         0.6,
         3.4,
         [0.8, 1.2, 1.6, 2.0, 2.4, 2.8, 3.2],
